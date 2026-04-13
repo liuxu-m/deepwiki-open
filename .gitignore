@@ -83,7 +83,6 @@ graphify-out/
 .claude/
 .trae/
 skills-lock.json
-yarn.lock
 .playwright-cli/
 DEPLOYMENT.md
 

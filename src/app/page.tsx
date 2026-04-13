@@ -138,7 +138,7 @@ export default function Home() {
   const [accessToken, setAccessToken] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedLanguage, setSelectedLanguage] = useState<string>('zh');
+  const [selectedLanguage, setSelectedLanguage] = useState<string>(language);
 
   // Authentication state
   const [authRequired, setAuthRequired] = useState<boolean>(false);
