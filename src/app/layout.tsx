@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "next-themes";
 import { LanguageProvider } from "@/contexts/LanguageContext";
+import { TaskQueueProvider } from "@/contexts/TaskQueueContext";
+import TaskQueuePanel from "@/components/TaskQueuePanel";
 
 export const metadata: Metadata = {
   title: "Deepwiki Open Source | Sheing Ng",
@@ -26,7 +28,10 @@ export default function RootLayout({
       <body className="antialiased">
         <ThemeProvider attribute="data-theme" defaultTheme="system" enableSystem>
           <LanguageProvider>
-            {children}
+            <TaskQueueProvider>
+              {children}
+              <TaskQueuePanel />
+            </TaskQueueProvider>
           </LanguageProvider>
         </ThemeProvider>
       </body>
