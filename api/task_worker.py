@@ -68,6 +68,53 @@ def load_checkpoint(task_id: str) -> Optional[dict]:
         return json.loads(path.read_text(encoding="utf-8"))
     return None
 
+def _normalize_wiki_output(wiki_struct: dict, generated_pages: dict, task: dict) -> tuple[dict, dict]:
+    """
+    将 task_worker 输出的 snake_case 字段转换为前端 WikiPage 接口期望的格式。
+    同时补全 wiki_structure 缺少的 id 和 rootSections 字段。
+    """
+    # 转换 wiki_structure
+    struct = dict(wiki_struct)
+    struct["id"] = struct.get("id") or "wiki-root"
+    # rootSections：从 sections 中提取顶级 section 的 id
+    struct["rootSections"] = [
+        s["id"] for s in struct.get("sections", [])
+        if not any(sec.get("subsection_refs") and s["id"] in sec["subsection_refs"]
+                   for sec in struct.get("sections", []))
+    ][:10] if struct.get("sections") else []
+
+    # 转换 wiki_structure.pages 中的字段，并将内容合并进来
+    for page in struct.get("pages", []):
+        if "relevant_files" in page:
+            page["filePaths"] = page.pop("relevant_files")
+        if "related_pages" in page:
+            page["relatedPages"] = page.pop("related_pages")
+        page.pop("parent_section", None)
+        # 补充 content（从 generated_pages 合并）
+        page_id = page.get("id")
+        if page_id and page_id in generated_pages:
+            page["content"] = generated_pages[page_id].get("content", "")
+
+    # 转换 generated_pages（dict by page_id）
+    norm_pages = {}
+    for pid, pdata in generated_pages.items():
+        page = dict(pdata)
+        if "relevant_files" in page:
+            page["filePaths"] = page.pop("relevant_files")
+        if "related_pages" in page:
+            page["relatedPages"] = page.pop("related_pages")
+        if "parent_section" in page:
+            page.pop("parent_section", None)
+        # 确保必要字段存在
+        page.setdefault("content", "")
+        page.setdefault("importance", "medium")
+        page.setdefault("relatedPages", [])
+        page.setdefault("filePaths", [])
+        norm_pages[pid] = page
+
+    return struct, norm_pages
+
+
 def save_wiki_output(task_id: str, wiki_data: dict) -> Path:
     """保存最终 Wiki 输出"""
     task_dir = get_task_dir(task_id)
@@ -83,9 +130,11 @@ def _save_wiki_output_to_project_cache(wiki_data: dict) -> None:
       ~/.adalflow/wikicache/deepwiki_cache_{repo_type}_{owner}_{repo}_{language}.json
     """
     owner = wiki_data.get("owner")
-    repo = wiki_data.get("repo")
+    repo_val = wiki_data.get("repo")
     repo_type = wiki_data.get("repo_type", "github")
     language = wiki_data.get("language", "en")
+    # repo 可能是 dict（如新格式）或 string（旧格式）
+    repo = repo_val.get("repo") if isinstance(repo_val, dict) else repo_val
     if not owner or not repo:
         return
 
@@ -630,7 +679,8 @@ async def run_task(task: dict) -> None:
     wiki_output = {
         "task_id": task_id,
         "owner": owner,
-        "repo": repo,
+        "repo_url": repo_url,
+        "repo": {"owner": owner, "repo": repo, "type": repo_type},
         "repo_type": repo_type,
         "language": language,
         "provider": provider,
@@ -640,6 +690,10 @@ async def run_task(task: dict) -> None:
         "created_at": task.get("created_at"),
         "completed_at": int(time.time() * 1000),
     }
+    # 字段名转换：snake_case → camelCase（兼容前端 WikiPage 接口）
+    wiki_struct_norm, generated_pages_norm = _normalize_wiki_output(wiki_struct, generated_pages, task)
+    wiki_output["wiki_structure"] = wiki_struct_norm
+    wiki_output["generated_pages"] = generated_pages_norm
     save_wiki_output(task_id, wiki_output)
     # 同时保存到项目列表可读取的缓存目录
     _save_wiki_output_to_project_cache(wiki_output)
