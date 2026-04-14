@@ -1,5 +1,6 @@
 import os
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -17,10 +18,19 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+# ── Lifespan: 启动/关闭 Worker ──────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from api.task_worker import start_worker, stop_worker
+    start_worker()
+    yield
+    stop_worker()
+
 # Initialize FastAPI app
 app = FastAPI(
     title="Streaming API",
-    description="API for streaming chat completions"
+    description="API for streaming chat completions",
+    lifespan=lifespan,
 )
 
 # Configure CORS
@@ -706,3 +716,126 @@ async def get_processed_projects():
     except Exception as e:
         logger.error(f"Error listing processed projects from {WIKI_CACHE_DIR}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to list processed projects from server cache.")
+
+
+# ── 任务队列 API ──────────────────────────────────────────────────────────────
+
+from api.task_queue import (
+    create_task as db_create_task,
+    list_tasks as db_list_tasks,
+    get_task as db_get_task,
+    cancel_task as db_cancel_task,
+    request_pause as db_request_pause,
+    resume_task as db_resume_task,
+    format_task_response,
+)
+from api.task_worker import worker_status as get_worker_status
+
+
+class TaskCreateRequest(BaseModel):
+    owner: str
+    repo: str
+    repo_type: str = "github"
+    repo_url: str
+    language: str = "en"
+    is_comprehensive: bool = True
+    provider: str = "google"
+    model: str = "gemini-2.0-flash"
+    token: Optional[str] = None
+    local_path: Optional[str] = None
+    excluded_dirs: Optional[str] = None
+    excluded_files: Optional[str] = None
+    included_dirs: Optional[str] = None
+    included_files: Optional[str] = None
+
+
+@app.get("/api/tasks")
+async def api_list_tasks():
+    """列出所有任务（最近 50 条）"""
+    tasks = db_list_tasks(limit=50)
+    return [format_task_response(t) for t in tasks]
+
+
+@app.post("/api/tasks", status_code=201)
+async def api_create_task(req: TaskCreateRequest):
+    """提交新的 Wiki 生成任务"""
+    task = db_create_task(
+        owner=req.owner,
+        repo=req.repo,
+        repo_type=req.repo_type,
+        repo_url=req.repo_url,
+        language=req.language,
+        is_comprehensive=req.is_comprehensive,
+        provider=req.provider,
+        model=req.model,
+        token=req.token,
+        local_path=req.local_path,
+        excluded_dirs=req.excluded_dirs,
+        excluded_files=req.excluded_files,
+        included_dirs=req.included_dirs,
+        included_files=req.included_files,
+    )
+    return format_task_response(task)
+
+
+@app.get("/api/tasks/{task_id}")
+async def api_get_task(task_id: str):
+    """获取单个任务详情"""
+    task = db_get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return format_task_response(task)
+
+
+@app.delete("/api/tasks/{task_id}")
+async def api_cancel_task(task_id: str):
+    """取消任务（仅 queued/paused 可取消）"""
+    success = db_cancel_task(task_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Task cannot be cancelled")
+    return {"message": "Task cancelled"}
+
+
+@app.post("/api/tasks/{task_id}/pause")
+async def api_pause_task(task_id: str):
+    """请求暂停正在运行的任务"""
+    success = db_request_pause(task_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Task is not running")
+    return {"message": "Pause requested"}
+
+
+@app.post("/api/tasks/{task_id}/resume")
+async def api_resume_task(task_id: str):
+    """恢复暂停的任务"""
+    success = db_resume_task(task_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Task is not paused")
+    return {"message": "Task resumed"}
+
+
+@app.get("/api/tasks/{task_id}/progress")
+async def api_task_progress(task_id: str):
+    """轻量级进度端点（前端轮询用）"""
+    task = db_get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    total = task.get("total_pages") or 0
+    completed = task.get("completed_pages") or 0
+    return {
+        "id": task_id,
+        "status": task["status"],
+        "current_step": task.get("current_step"),
+        "total_pages": total,
+        "completed_pages": completed,
+        "progress": int(completed / total * 100) if total > 0 else 0,
+        "current_page_title": task.get("current_page_title"),
+        "error_message": task.get("error_message"),
+    }
+
+
+@app.get("/api/worker/status")
+async def api_worker_status():
+    """Worker 运行状态（调试用）"""
+    return get_worker_status()
+
