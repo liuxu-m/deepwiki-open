@@ -57,6 +57,7 @@ interface TaskQueueContextValue {
   pauseTask: (taskId: string) => Promise<void>
   resumeTask: (taskId: string) => Promise<void>
   cancelTask: (taskId: string) => Promise<void>
+  deleteTask: (taskId: string) => Promise<void>
   refreshTasks: () => Promise<void>
   isLoading: boolean
 }
@@ -142,9 +143,14 @@ export function TaskQueueProvider({ children }: { children: React.ReactNode }) {
     await refreshTasks()
   }, [refreshTasks])
 
+  const deleteTask = useCallback(async (taskId: string) => {
+    await fetch(`/api/tasks/${taskId}/delete`, { method: 'DELETE' })
+    await refreshTasks()
+  }, [refreshTasks])
+
   return (
     <TaskQueueContext.Provider
-      value={{ tasks, submitTask, pauseTask, resumeTask, cancelTask, refreshTasks, isLoading }}
+      value={{ tasks, submitTask, pauseTask, resumeTask, cancelTask, deleteTask, refreshTasks, isLoading }}
     >
       {children}
     </TaskQueueContext.Provider>

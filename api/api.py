@@ -725,6 +725,7 @@ from api.task_queue import (
     list_tasks as db_list_tasks,
     get_task as db_get_task,
     cancel_task as db_cancel_task,
+    delete_task as db_delete_task,
     request_pause as db_request_pause,
     resume_task as db_resume_task,
     format_task_response,
@@ -740,7 +741,7 @@ class TaskCreateRequest(BaseModel):
     language: str = "en"
     is_comprehensive: bool = True
     provider: str = "google"
-    model: str = "gemini-2.0-flash"
+    model: str = "MiniMax-M2.7"
     token: Optional[str] = None
     local_path: Optional[str] = None
     excluded_dirs: Optional[str] = None
@@ -794,6 +795,15 @@ async def api_cancel_task(task_id: str):
     if not success:
         raise HTTPException(status_code=400, detail="Task cannot be cancelled")
     return {"message": "Task cancelled"}
+
+
+@app.delete("/api/tasks/{task_id}/delete")
+async def api_delete_task(task_id: str):
+    """物理删除任务（任意状态均可）"""
+    success = db_delete_task(task_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"message": "Task deleted"}
 
 
 @app.post("/api/tasks/{task_id}/pause")

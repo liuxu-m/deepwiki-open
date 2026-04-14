@@ -75,6 +75,31 @@ def save_wiki_output(task_id: str, wiki_data: dict) -> Path:
     output_path.write_text(json.dumps(wiki_data, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
 
+
+def _save_wiki_output_to_project_cache(wiki_data: dict) -> None:
+    """
+    将生成的 wiki 保存到项目列表可读取的缓存路径。
+    项目列表 API (/api/processed_projects) 扫描的是:
+      ~/.adalflow/wikicache/deepwiki_cache_{repo_type}_{owner}_{repo}_{language}.json
+    """
+    owner = wiki_data.get("owner")
+    repo = wiki_data.get("repo")
+    repo_type = wiki_data.get("repo_type", "github")
+    language = wiki_data.get("language", "en")
+    if not owner or not repo:
+        return
+
+    try:
+        cache_dir = Path.home() / ".adalflow" / "wikicache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"deepwiki_cache_{repo_type}_{owner}_{repo}_{language}.json"
+        cache_path = cache_dir / filename
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(wiki_data, f, ensure_ascii=False, indent=2)
+        logger.info(f"[project-cache] Saved wiki to {cache_path}")
+    except Exception as e:
+        logger.warning(f"[project-cache] Failed to save wiki cache: {e}")
+
 # ── LLM 调用工具 ──────────────────────────────────────────────────────────────
 
 async def _call_llm_stream(
@@ -411,7 +436,7 @@ async def run_task(task: dict) -> None:
     """
     task_id = task["id"]
     provider = task.get("provider", "google")
-    model = task.get("model", "gemini-2.0-flash")
+    model = task.get("model", "MiniMax-M2.7")
     language = task.get("language", "en")
     owner = task.get("owner") or ""
     repo = task.get("repo") or ""
@@ -616,6 +641,8 @@ async def run_task(task: dict) -> None:
         "completed_at": int(time.time() * 1000),
     }
     save_wiki_output(task_id, wiki_output)
+    # 同时保存到项目列表可读取的缓存目录
+    _save_wiki_output_to_project_cache(wiki_output)
 
     # 清理 checkpoint 文件
     cp_path = get_task_dir(task_id) / "checkpoint.json"

@@ -4,10 +4,11 @@ const BACKEND = process.env.SERVER_BASE_URL || 'http://localhost:8001'
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { task_id: string } }
+  { params }: { params: Promise<{ task_id: string }> }
 ) {
   try {
-    const res = await fetch(`${BACKEND}/api/tasks/${params.task_id}`, { cache: 'no-store' })
+    const { task_id } = await params
+    const res = await fetch(`${BACKEND}/api/tasks/${task_id}`, { cache: 'no-store' })
     const data = await res.json()
     return NextResponse.json(data, { status: res.status })
   } catch (error) {
@@ -18,10 +19,11 @@ export async function GET(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { task_id: string } }
+  { params }: { params: Promise<{ task_id: string }> }
 ) {
   try {
-    const res = await fetch(`${BACKEND}/api/tasks/${params.task_id}`, { method: 'DELETE' })
+    const { task_id } = await params
+    const res = await fetch(`${BACKEND}/api/tasks/${task_id}`, { method: 'DELETE' })
     const data = await res.json()
     return NextResponse.json(data, { status: res.status })
   } catch (error) {

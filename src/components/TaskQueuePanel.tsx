@@ -42,13 +42,13 @@ const STATUS_LABELS: Record<string, string> = {
 // ── 单条任务卡片 ──────────────────────────────────────────────────────────────
 
 function TaskCard({ task }: { task: TaskInfo }) {
-  const { pauseTask, resumeTask, cancelTask } = useTaskQueue()
+  const { pauseTask, resumeTask, cancelTask, deleteTask } = useTaskQueue()
 
   const repoLabel = task.owner && task.repo
     ? `${task.repo_type || 'github'} / ${task.owner} / ${task.repo}`
     : task.repo || '未知仓库'
 
-  const stepLabel = STATUS_LABELS[task.current_step || 'queued'] || task.current_step || ''
+  const stepLabel = STATUS_LABELS[task.current_step ?? 'queued'] ?? (task.current_step ?? '')
 
   return (
     <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 mb-2 bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-800 transition-colors">
@@ -70,7 +70,7 @@ function TaskCard({ task }: { task: TaskInfo }) {
               <FaPause size={10} />
             </button>
           )}
-          {task.status === 'paused' && (
+          {(task.status === 'paused' || task.status === 'pause_requested') && (
             <button
               onClick={() => resumeTask(task.id)}
               className="text-xs px-2 py-0.5 rounded bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-800 transition-colors flex items-center gap-1"
@@ -79,11 +79,20 @@ function TaskCard({ task }: { task: TaskInfo }) {
               <FaPlay size={10} /> 恢复
             </button>
           )}
-          {['queued', 'paused'].includes(task.status) && (
+          {['queued', 'paused', 'failed'].includes(task.status) && (
             <button
               onClick={() => cancelTask(task.id)}
               className="text-xs w-6 h-6 flex items-center justify-center rounded bg-red-100 dark:bg-red-900 text-red-600 dark:text-red-300 hover:bg-red-200 dark:hover:bg-red-800 transition-colors"
               title="取消"
+            >
+              <FaTimes size={10} />
+            </button>
+          )}
+          {['completed', 'failed', 'cancelled'].includes(task.status) && (
+            <button
+              onClick={() => deleteTask(task.id)}
+              className="text-xs w-6 h-6 flex items-center justify-center rounded bg-gray-100 dark:bg-gray-700 text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+              title="删除"
             >
               <FaTimes size={10} />
             </button>
@@ -95,6 +104,13 @@ function TaskCard({ task }: { task: TaskInfo }) {
       <div className="text-xs text-gray-500 dark:text-gray-400 truncate mb-1.5">
         {repoLabel}
       </div>
+
+      {/* 完成状态文字 */}
+      {task.status === 'completed' && (
+        <div className="text-xs text-green-600 dark:text-green-400 font-medium mb-1">
+          ✓ 已完成{typeof task.total_pages === 'number' && task.total_pages > 0 ? ` · ${task.total_pages} 页` : ''}
+        </div>
+      )}
 
       {/* 进度条 */}
       {['running', 'pause_requested', 'paused', 'completed'].includes(task.status) && task.total_pages > 0 && (
@@ -132,7 +148,7 @@ function TaskCard({ task }: { task: TaskInfo }) {
 
 // ── 主悬浮框 ──────────────────────────────────────────────────────────────────
 
-const VISIBLE_STATUSES: TaskStatus[] = ['queued', 'running', 'pause_requested', 'paused', 'failed']
+const VISIBLE_STATUSES: TaskStatus[] = ['queued', 'running', 'pause_requested', 'paused', 'completed', 'failed', 'cancelled']
 
 export default function TaskQueuePanel() {
   const { tasks } = useTaskQueue()

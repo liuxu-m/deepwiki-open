@@ -53,6 +53,10 @@ interface ConfigurationModalProps {
   onSubmit: () => void;
   isSubmitting: boolean;
 
+  // Background task queue mode
+  useBackgroundQueue: boolean;
+  setUseBackgroundQueue: (value: boolean) => void;
+
   // Authentication
   authRequired?: boolean;
   authCode?: string;
@@ -91,6 +95,8 @@ export default function ConfigurationModal({
   setIncludedFiles,
   onSubmit,
   isSubmitting,
+  useBackgroundQueue,
+  setUseBackgroundQueue,
   authRequired,
   authCode,
   setAuthCode,
@@ -242,6 +248,36 @@ export default function ConfigurationModal({
               allowPlatformChange={true}
             />
 
+            {/* Background queue mode toggle */}
+            <div className="mb-4 p-4 bg-[var(--background)]/50 rounded-md border border-[var(--border-color)]">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span className="text-sm font-medium text-[var(--foreground)]">
+                    {t.form?.backgroundQueue || '后台队列模式'}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setUseBackgroundQueue(!useBackgroundQueue)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    useBackgroundQueue ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                      useBackgroundQueue ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+              <p className="text-xs text-[var(--muted)] mt-1.5 ml-6">
+                {t.form?.backgroundQueueDesc || '后台运行，页面关闭不中断，可暂停/恢复。关闭则同步生成。'}
+              </p>
+            </div>
+
             {/* Authorization Code Input */}
             {isAuthLoading && (
               <div className="mb-4 p-3 bg-[var(--background)]/50 rounded-md border border-[var(--border-color)] text-sm text-[var(--muted)]">
@@ -288,7 +324,11 @@ export default function ConfigurationModal({
               disabled={isSubmitting}
               className="px-4 py-2 text-sm font-medium rounded-md border border-transparent bg-[var(--accent-primary)]/90 text-white hover:bg-[var(--accent-primary)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isSubmitting ? (t.common?.processing || 'Processing...') : (t.common?.generateWiki || 'Generate Wiki')}
+              {isSubmitting
+                ? (t.common?.processing || 'Processing...')
+                : useBackgroundQueue
+                  ? (t.form?.submitToQueue || '提交到后台队列')
+                  : (t.common?.generateWiki || 'Generate Wiki')}
             </button>
           </div>
         </div>

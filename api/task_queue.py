@@ -84,7 +84,7 @@ def create_task(
     language: str = "en",
     is_comprehensive: bool = True,
     provider: str = "google",
-    model: str = "gemini-2.0-flash",
+    model: str = "MiniMax-M2.7",
     token: Optional[str] = None,
     local_path: Optional[str] = None,
     excluded_dirs: Optional[str] = None,
@@ -222,6 +222,13 @@ def cancel_task(task_id: str) -> bool:
                WHERE id = ? AND status IN ('queued', 'paused')""",
             (now, now, task_id),
         )
+        return result.rowcount > 0
+
+
+def delete_task(task_id: str) -> bool:
+    """物理删除任务（任意状态均可）"""
+    with get_conn() as conn:
+        result = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         return result.rowcount > 0
 
 

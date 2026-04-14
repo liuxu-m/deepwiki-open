@@ -12,6 +12,7 @@ import { extractUrlPath, extractUrlDomain } from '@/utils/urlDecoder';
 import { useProcessedProjects } from '@/hooks/useProcessedProjects';
 
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useTaskQueue } from '@/contexts/TaskQueueContext';
 
 // Define the demo mermaid charts outside the component
 const DEMO_FLOW_CHART = `graph TD
@@ -144,6 +145,10 @@ export default function Home() {
   const [authRequired, setAuthRequired] = useState<boolean>(false);
   const [authCode, setAuthCode] = useState<string>('');
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+
+  // Background task queue mode
+  const [useBackgroundQueue, setUseBackgroundQueue] = useState<boolean>(false);
+  const { submitTask } = useTaskQueue();
 
   // Sync the language context with the selectedLanguage state
   useEffect(() => {
@@ -382,6 +387,42 @@ export default function Home() {
     // Add comprehensive parameter
     params.append('comprehensive', isComprehensiveView.toString());
 
+    // ── 后台队列模式：提交任务后直接跳转到 Wiki 页面 ──
+    if (useBackgroundQueue) {
+      const repoUrl = localPath
+        ? `file://${localPath}`
+        : repositoryInput;
+
+      try {
+        const submittedTask = await submitTask({
+          owner,
+          repo,
+          repo_type: type,
+          repo_url: repoUrl,
+          language: selectedLanguage,
+          is_comprehensive: isComprehensiveView,
+          provider,
+          model: isCustomModel && customModel ? customModel : model,
+          token: accessToken || null,
+          local_path: localPath || null,
+          excluded_dirs: excludedDirs || null,
+          excluded_files: excludedFiles || null,
+          included_dirs: includedDirs || null,
+          included_files: includedFiles || null,
+        });
+
+        // 带上 task_id 让 Wiki 页面知道正在运行后台任务
+        params.set('bg_task_id', submittedTask.id);
+        const bgQueryString = params.toString() ? `?${params.toString()}` : '';
+        router.push(`/${owner}/${repo}${bgQueryString}`);
+      } catch (err) {
+        console.error('[TaskQueue] submitTask failed:', err);
+        setError(String(err));
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
     const queryString = params.toString() ? `?${params.toString()}` : '';
 
     // Navigate to the dynamic route
@@ -472,6 +513,8 @@ export default function Home() {
             setIncludedFiles={setIncludedFiles}
             onSubmit={handleGenerateWiki}
             isSubmitting={isSubmitting}
+            useBackgroundQueue={useBackgroundQueue}
+            setUseBackgroundQueue={setUseBackgroundQueue}
             authRequired={authRequired}
             authCode={authCode}
             setAuthCode={setAuthCode}

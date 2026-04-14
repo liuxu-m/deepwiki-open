@@ -4,10 +4,11 @@ const BACKEND = process.env.SERVER_BASE_URL || 'http://localhost:8001'
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: { task_id: string } }
+  { params }: { params: Promise<{ task_id: string }> }
 ) {
   try {
-    const res = await fetch(`${BACKEND}/api/tasks/${params.task_id}/resume`, {
+    const { task_id } = await params
+    const res = await fetch(`${BACKEND}/api/tasks/${task_id}/resume`, {
       method: 'POST',
     })
     const data = await res.json()

@@ -8,6 +8,7 @@ import ModelSelectionModal from '@/components/ModelSelectionModal';
 import TableOfContents from '@/components/TableOfContents';
 import WikiTreeView from '@/components/WikiTreeView';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useTaskQueue } from '@/contexts/TaskQueueContext';
 import { RepoInfo } from '@/types/repoinfo';
 import getRepoUrl from '@/utils/getRepoUrl';
 import { extractUrlDomain, extractUrlPath } from '@/utils/urlDecoder';
@@ -218,6 +219,9 @@ export default function RepoWikiPage() {
         ? 'github'
         : searchParams.get('type') || 'github';
 
+  // Background task ID (passed when submitted via background queue)
+  const bgTaskId = searchParams.get('bg_task_id') || '';
+
   // Import language context for translations
   const { messages } = useLanguage();
 
@@ -248,6 +252,10 @@ export default function RepoWikiPage() {
   const [currentToken, setCurrentToken] = useState(token); // Track current effective token
   const [effectiveRepoInfo, setEffectiveRepoInfo] = useState(repoInfo); // Track effective repo info with cached data
   const [embeddingError, setEmbeddingError] = useState(false);
+
+  // Task queue integration for background task mode
+  const { tasks } = useTaskQueue();
+  const bgTask = tasks.find(t => t.id === bgTaskId);
 
   // Model selection state variables
   const [selectedProviderState, setSelectedProviderState] = useState(providerParam);
@@ -378,6 +386,20 @@ export default function RepoWikiPage() {
 
     fetchAuthStatus();
   }, []);
+
+  // ── 后台任务完成/失败时自动刷新页面 ──
+  useEffect(() => {
+    if (!bgTaskId) return;
+    const task = tasks.find(t => t.id === bgTaskId);
+    if (!task) return;
+    if (task.status === 'completed') {
+      // 清除 URL 中的 bg_task_id，防止刷新后再次触发 reload 形成无限循环
+      const url = new URL(window.location.href);
+      url.searchParams.delete('bg_task_id');
+      window.history.replaceState({}, '', url.toString());
+      window.location.reload();
+    }
+  }, [bgTaskId, tasks]);
 
   // Generate content for a wiki page
   const generatePageContent = useCallback(async (page: WikiPage, owner: string, repo: string) => {
@@ -1963,8 +1985,55 @@ IMPORTANT:
       <main className="flex-1 w-full overflow-y-auto">
         {isLoading && !wikiStructure ? (
           <div className="flex flex-col items-center justify-center p-12 bg-[var(--card-bg)] rounded-2xl shadow-sm mx-6 my-6">
-            {/* Modern loading animation */}
-            <div className="relative mb-8">
+
+            {/* 后台任务进度 Banner */}
+            {bgTaskId && bgTask && ['queued', 'running', 'pause_requested', 'paused'].includes(bgTask.status) && (
+              <div className="w-full max-w-md mb-8 p-4 bg-blue-50 dark:bg-blue-950/30 rounded-xl border border-blue-200 dark:border-blue-800">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                  <span className="font-medium text-blue-700 dark:text-blue-300">
+                    Wiki 正在后台生成中...
+                  </span>
+                </div>
+                {bgTask.total_pages > 0 && (
+                  <div className="mb-2">
+                    <div className="flex justify-between text-xs text-blue-600 dark:text-blue-400 mb-1">
+                      <span className="truncate">{bgTask.current_step || '处理中'}{bgTask.current_page_title ? `: ${bgTask.current_page_title}` : ''}</span>
+                      <span>{bgTask.progress}% · {bgTask.completed_pages}/{bgTask.total_pages} 页</span>
+                    </div>
+                    <div className="w-full bg-blue-100 dark:bg-blue-900/50 rounded-full h-2">
+                      <div
+                        className="bg-blue-500 h-2 rounded-full transition-all"
+                        style={{ width: `${bgTask.progress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                <p className="text-xs text-blue-500 dark:text-blue-500">
+                  {bgTask.status === 'paused' ? '任务已暂停' : '页面关闭不影响任务执行，完成后将自动加载'}
+                </p>
+              </div>
+            )}
+
+            {/* 后台任务失败 Banner */}
+            {bgTaskId && bgTask?.status === 'failed' && (
+              <div className="w-full max-w-md mb-8 p-4 bg-red-50 dark:bg-red-950/30 rounded-xl border border-red-200 dark:border-red-800">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-red-500 text-lg">✕</span>
+                  <span className="font-medium text-red-700 dark:text-red-300">Wiki 生成失败</span>
+                </div>
+                <p className="text-xs text-red-500 dark:text-red-400 mb-3">{bgTask.error_message || '未知错误'}</p>
+                <button
+                  onClick={() => window.location.reload()}
+                  className="text-xs px-3 py-1.5 bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 rounded-lg hover:bg-red-200 dark:hover:bg-red-800 transition-colors"
+                >
+                  重试
+                </button>
+              </div>
+            )}
+
+            {/* Standard loading */}
+            <div className="relative mb-4">
               <div className="w-16 h-16 border-4 border-blue-100 rounded-full animate-spin border-t-blue-500"></div>
             </div>
             <p className="text-[var(--foreground)] text-center mb-4 font-medium text-lg">
