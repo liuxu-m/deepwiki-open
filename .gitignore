@@ -70,7 +70,9 @@ next-env.d.ts
 certs/
 
 # Docker deployment
-deploy-package/
+# (deploy-package/ tracked in git, see below for excludes)
+deploy-package/*.tar.gz
+deploy-package/.env
 
 # local environments
 conda_envs/
