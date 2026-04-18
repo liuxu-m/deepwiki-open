@@ -13,8 +13,11 @@ export type TaskStatus =
   | 'failed'
   | 'cancelled'
 
+export type QueueTaskType = 'generate' | 'refresh'
+
 export interface TaskInfo {
   id: string
+  task_type: QueueTaskType
   status: TaskStatus
   owner: string | null
   repo: string | null
@@ -49,6 +52,7 @@ export interface TaskSubmission {
   excluded_files?: string | null
   included_dirs?: string | null
   included_files?: string | null
+  task_type?: QueueTaskType
 }
 
 interface TaskQueueContextValue {

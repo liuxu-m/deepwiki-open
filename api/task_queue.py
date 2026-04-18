@@ -21,6 +21,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
     status TEXT NOT NULL DEFAULT 'queued',
+    task_type TEXT NOT NULL DEFAULT 'generate',
     owner TEXT,
     repo TEXT,
     repo_type TEXT,
@@ -74,6 +75,38 @@ def init_db():
     """初始化数据库表结构"""
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
+        }
+        if "task_type" not in columns:
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN task_type TEXT NOT NULL DEFAULT 'generate'"
+            )
+
+
+def find_unfinished_repo_task(
+    owner: str,
+    repo: str,
+    repo_type: str,
+    language: str,
+) -> Optional[dict]:
+    """查找同仓库同语言下未完成的任务"""
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM tasks
+            WHERE owner = ?
+              AND repo = ?
+              AND repo_type = ?
+              AND language = ?
+              AND status IN ('queued', 'running', 'pause_requested', 'paused')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (owner, repo, repo_type, language),
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def create_task(
@@ -91,20 +124,25 @@ def create_task(
     excluded_files: Optional[str] = None,
     included_dirs: Optional[str] = None,
     included_files: Optional[str] = None,
+    task_type: str = "generate",
 ) -> dict:
     """创建新任务，返回任务字典"""
+    existing = find_unfinished_repo_task(owner, repo, repo_type, language)
+    if existing:
+        return existing
+
     task_id = str(uuid.uuid4())
     now = int(time.time() * 1000)
     with get_conn() as conn:
         conn.execute(
             """INSERT INTO tasks (
-                id, status, owner, repo, repo_type, repo_url, token, local_path,
+                id, status, task_type, owner, repo, repo_type, repo_url, token, local_path,
                 language, is_comprehensive, provider, model,
                 excluded_dirs, excluded_files, included_dirs, included_files,
                 created_at, updated_at, current_step
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
-                task_id, "queued", owner, repo, repo_type, repo_url, token, local_path,
+                task_id, "queued", task_type, owner, repo, repo_type, repo_url, token, local_path,
                 language, 1 if is_comprehensive else 0, provider, model,
                 excluded_dirs, excluded_files, included_dirs, included_files,
                 now, now, "queued",
@@ -288,6 +326,7 @@ def format_task_response(task: dict) -> dict:
     progress = int(completed / total * 100) if total > 0 else 0
     return {
         "id": task["id"],
+        "task_type": task.get("task_type", "generate"),
         "status": task["status"],
         "owner": task.get("owner"),
         "repo": task.get("repo"),

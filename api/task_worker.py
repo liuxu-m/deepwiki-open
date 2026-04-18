@@ -56,6 +56,43 @@ def get_task_dir(task_id: str) -> Path:
     task_dir.mkdir(parents=True, exist_ok=True)
     return task_dir
 
+def expand_relevant_files(
+    relevant_files: list[str],
+    repo_files: list[str],
+    per_directory_limit: int = 3,
+    total_limit: int = 8,
+) -> list[str]:
+    """将 relevant_files 中的目录路径受控展开为具体文件路径。"""
+    expanded: list[str] = []
+    seen: set[str] = set()
+
+    for item in relevant_files:
+        if len(expanded) >= total_limit:
+            break
+
+        normalized = (item or "").strip()
+        if not normalized:
+            continue
+
+        if normalized.endswith("/"):
+            matches = [
+                path for path in repo_files
+                if path.startswith(normalized) and not path.endswith("/")
+            ][:per_directory_limit]
+            for match in matches:
+                if match not in seen:
+                    expanded.append(match)
+                    seen.add(match)
+                    if len(expanded) >= total_limit:
+                        break
+        else:
+            if normalized not in seen:
+                expanded.append(normalized)
+                seen.add(normalized)
+
+    return expanded[:total_limit]
+
+
 def save_checkpoint(task_id: str, data: dict) -> None:
     """保存断点续传数据"""
     path = get_task_dir(task_id) / "checkpoint.json"
@@ -90,6 +127,8 @@ def _normalize_wiki_output(wiki_struct: dict, generated_pages: dict, task: dict)
         if "related_pages" in page:
             page["relatedPages"] = page.pop("related_pages")
         page.pop("parent_section", None)
+        page.pop("description", None)
+        page.pop("generated_at", None)
         # 补充 content（从 generated_pages 合并）
         page_id = page.get("id")
         if page_id and page_id in generated_pages:
@@ -105,6 +144,8 @@ def _normalize_wiki_output(wiki_struct: dict, generated_pages: dict, task: dict)
             page["relatedPages"] = page.pop("related_pages")
         if "parent_section" in page:
             page.pop("parent_section", None)
+        page.pop("description", None)
+        page.pop("generated_at", None)
         # 确保必要字段存在
         page.setdefault("content", "")
         page.setdefault("importance", "medium")
@@ -449,7 +490,7 @@ def build_page_content_prompt(
     """构建页面内容的 user prompt"""
     page_title = page.get("title", "")
     page_desc = page.get("description", "")
-    relevant_files = page.get("relevant_files", [])
+    relevant_files = expand_relevant_files(page.get("relevant_files", []), repo_files)
     repo_name = wiki_struct.get("title", "")
 
     files_context = ""

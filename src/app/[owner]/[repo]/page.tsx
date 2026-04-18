@@ -252,10 +252,13 @@ export default function RepoWikiPage() {
   const [currentToken, setCurrentToken] = useState(token); // Track current effective token
   const [effectiveRepoInfo, setEffectiveRepoInfo] = useState(repoInfo); // Track effective repo info with cached data
   const [embeddingError, setEmbeddingError] = useState(false);
+  const [refreshCacheNonce, setRefreshCacheNonce] = useState(0);
 
   // Task queue integration for background task mode
-  const { tasks } = useTaskQueue();
+  const { tasks, submitTask } = useTaskQueue();
   const bgTask = tasks.find(t => t.id === bgTaskId);
+  const [activeRefreshTaskId, setActiveRefreshTaskId] = useState<string | null>(null);
+  const [isRefreshSubmitting, setIsRefreshSubmitting] = useState(false);
 
   // Model selection state variables
   const [selectedProviderState, setSelectedProviderState] = useState(providerParam);
@@ -400,6 +403,31 @@ export default function RepoWikiPage() {
       window.location.reload();
     }
   }, [bgTaskId, tasks]);
+
+  useEffect(() => {
+    if (!activeRefreshTaskId) return;
+    const task = tasks.find(t => t.id === activeRefreshTaskId);
+    if (!task) return;
+
+    if (task.status === 'completed') {
+      effectRan.current = false;
+      cacheLoadedSuccessfully.current = false;
+      setIsLoading(true);
+      setLoadingMessage(messages.loading?.fetchingCache || 'Loading refreshed wiki...');
+      setIsRefreshSubmitting(false);
+      setActiveRefreshTaskId(null);
+      setRefreshCacheNonce(prev => prev + 1);
+    }
+
+    if (task.status === 'failed' || task.status === 'cancelled') {
+      setActiveRefreshTaskId(null);
+      setIsRefreshSubmitting(false);
+      setLoadingMessage(undefined);
+      if (task.error_message) {
+        setError(task.error_message);
+      }
+    }
+  }, [activeRefreshTaskId, tasks, messages.loading]);
 
   // Generate content for a wiki page
   const generatePageContent = useCallback(async (page: WikiPage, owner: string, repo: string) => {
@@ -1606,117 +1634,52 @@ IMPORTANT:
 
   const confirmRefresh = useCallback(async (newToken?: string) => {
     setShowModelOptions(false);
-    setLoadingMessage(messages.loading?.clearingCache || 'Clearing server cache...');
-    setIsLoading(true); // Show loading indicator immediately
+
+    if(authRequired && !authCode) {
+      console.error("Authorization code is required");
+      setError('Authorization code is required');
+      return;
+    }
 
     try {
-      const params = new URLSearchParams({
+      setIsRefreshSubmitting(true);
+      setLoadingMessage('Refresh task submitted. Existing wiki remains available.');
+      setError(null);
+
+      if (newToken) {
+        setCurrentToken(newToken);
+        const currentUrl = new URL(window.location.href);
+        currentUrl.searchParams.set('token', newToken);
+        window.history.replaceState({}, '', currentUrl.toString());
+      }
+
+      const tokenToUse = newToken ?? currentToken;
+      const submittedTask = await submitTask({
         owner: effectiveRepoInfo.owner,
         repo: effectiveRepoInfo.repo,
         repo_type: effectiveRepoInfo.type,
-        language: language,
+        repo_url: effectiveRepoInfo.repoUrl || getRepoUrl(effectiveRepoInfo),
+        language,
+        is_comprehensive: isComprehensiveView,
         provider: selectedProviderState,
         model: selectedModelState,
-        is_custom_model: isCustomSelectedModelState.toString(),
-        custom_model: customSelectedModelState,
-        comprehensive: isComprehensiveView.toString(),
-        authorization_code: authCode,
+        token: tokenToUse || undefined,
+        local_path: localPath || undefined,
+        excluded_dirs: modelExcludedDirs || undefined,
+        excluded_files: modelExcludedFiles || undefined,
+        included_dirs: modelIncludedDirs || undefined,
+        included_files: modelIncludedFiles || undefined,
+        task_type: 'refresh',
       });
 
-      // Add file filters configuration
-      if (modelExcludedDirs) {
-        params.append('excluded_dirs', modelExcludedDirs);
-      }
-      if (modelExcludedFiles) {
-        params.append('excluded_files', modelExcludedFiles);
-      }
-
-      if(authRequired && !authCode) {
-        setIsLoading(false);
-        console.error("Authorization code is required");
-        setError('Authorization code is required');
-        return;
-      }
-
-      const response = await fetch(`/api/wiki_cache?${params.toString()}`, {
-        method: 'DELETE',
-        headers: {
-          'Accept': 'application/json',
-        }
-      });
-
-      if (response.ok) {
-        console.log('Server-side wiki cache cleared successfully.');
-        // Optionally, show a success message for cache clearing if desired
-        // setLoadingMessage('Cache cleared. Refreshing wiki...');
-      } else {
-        const errorText = await response.text();
-        console.warn(`Failed to clear server-side wiki cache (status: ${response.status}): ${errorText}. Proceeding with refresh anyway.`);
-        // Optionally, inform the user about the cache clear failure but that refresh will still attempt
-        // setError(\`Cache clear failed: ${errorText}. Trying to refresh...\`);
-        if(response.status == 401) {
-          setIsLoading(false);
-          setLoadingMessage(undefined);
-          setError('Failed to validate the authorization code');
-          console.error('Failed to validate the authorization code')
-          return;
-        }
-      }
+      setActiveRefreshTaskId(submittedTask.id);
     } catch (err) {
-      console.warn('Error calling DELETE /api/wiki_cache:', err);
-      setIsLoading(false);
-      setEmbeddingError(false); // Reset embedding error state
-      // Optionally, inform the user about the cache clear error
-      // setError(\`Error clearing cache: ${err instanceof Error ? err.message : String(err)}. Trying to refresh...\`);
-      throw err;
+      console.error('Failed to submit refresh task:', err);
+      setLoadingMessage(undefined);
+      setError(err instanceof Error ? err.message : 'Failed to submit refresh task');
+      setIsRefreshSubmitting(false);
     }
-
-    // Update token if provided
-    if (newToken) {
-      // Update current token state
-      setCurrentToken(newToken);
-      // Update the URL parameters to include the new token
-      const currentUrl = new URL(window.location.href);
-      currentUrl.searchParams.set('token', newToken);
-      window.history.replaceState({}, '', currentUrl.toString());
-    }
-
-    // Proceed with the rest of the refresh logic
-    console.log('Refreshing wiki. Server cache will be overwritten upon new generation if not cleared.');
-
-    // Clear the localStorage cache (if any remnants or if it was used before this change)
-    const localStorageCacheKey = getCacheKey(effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, isComprehensiveView);
-    localStorage.removeItem(localStorageCacheKey);
-
-    // Reset cache loaded flag
-    cacheLoadedSuccessfully.current = false;
-    effectRan.current = false; // Allow the main data loading useEffect to run again
-
-    // Reset all state
-    setWikiStructure(undefined);
-    setCurrentPageId(undefined);
-    setGeneratedPages({});
-    setPagesInProgress(new Set());
-    setError(null);
-    setEmbeddingError(false); // Reset embedding error state
-    setIsLoading(true); // Set loading state for refresh
-    setLoadingMessage(messages.loading?.initializing || 'Initializing wiki generation...');
-
-    // Clear any in-progress requests for page content
-    activeContentRequests.clear();
-    // Reset flags related to request processing if they are component-wide
-    setStructureRequestInProgress(false); // Assuming this flag should be reset
-    setRequestInProgress(false); // Assuming this flag should be reset
-
-    // Explicitly trigger the data loading process again by re-invoking what the main useEffect does.
-    // This will first attempt to load from (now hopefully non-existent or soon-to-be-overwritten) server cache,
-    // then proceed to fetchRepositoryStructure if needed.
-    // To ensure fetchRepositoryStructure is called if cache is somehow still there or to force a full refresh:
-    // One option is to directly call fetchRepositoryStructure() if force refresh means bypassing cache check.
-    // For now, we rely on the standard loadData flow initiated by resetting effectRan and dependencies.
-    // This will re-trigger the main data loading useEffect.
-    // No direct call to fetchRepositoryStructure here, let the useEffect handle it based on effectRan.current = false.
-  }, [effectiveRepoInfo, language, messages.loading, activeContentRequests, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, isComprehensiveView, authCode, authRequired]);
+  }, [effectiveRepoInfo, language, selectedProviderState, selectedModelState, modelExcludedDirs, modelExcludedFiles, modelIncludedDirs, modelIncludedFiles, isComprehensiveView, authCode, authRequired, currentToken, localPath, submitTask]);
 
   // Start wiki generation when component mounts
   useEffect(() => {
@@ -1905,7 +1868,7 @@ IMPORTANT:
 
     // Clean up function for this effect is not strictly necessary for loadData,
     // but keeping the main unmount cleanup in the other useEffect
-  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView]);
+  }, [effectiveRepoInfo, effectiveRepoInfo.owner, effectiveRepoInfo.repo, effectiveRepoInfo.type, language, fetchRepositoryStructure, messages.loading?.fetchingCache, isComprehensiveView, refreshCacheNonce]);
 
   // Save wiki to server-side cache when generation is complete
   useEffect(() => {
@@ -2149,11 +2112,11 @@ IMPORTANT:
               <div className="mb-5">
                 <button
                   onClick={() => setIsModelSelectionModalOpen(true)}
-                  disabled={isLoading}
+                  disabled={isLoading || isRefreshSubmitting}
                   className="flex items-center w-full text-sm px-4 py-2.5 bg-[var(--background)] text-[var(--foreground)] rounded-xl hover:bg-blue-50 dark:hover:bg-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed border border-[var(--border-color)] transition-colors hover:cursor-pointer hover:border-blue-200 dark:hover:border-blue-700"
                 >
-                  <FaSync className={`mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-                  {messages.repoPage?.refreshWiki || 'Refresh Wiki'}
+                  <FaSync className={`mr-2 ${(isLoading || isRefreshSubmitting) ? 'animate-spin' : ''}`} />
+                  {isRefreshSubmitting ? 'Submitting refresh...' : (messages.repoPage?.refreshWiki || 'Refresh Wiki')}
                 </button>
               </div>
 
