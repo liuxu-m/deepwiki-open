@@ -420,18 +420,28 @@ def get_wiki_cache_path(owner: str, repo: str, repo_type: str, language: str) ->
     filename = f"deepwiki_cache_{repo_type}_{owner}_{repo}_{language}.json"
     return os.path.join(WIKI_CACHE_DIR, filename)
 
+def _read_cache_file(cache_path: str) -> dict:
+    """同步读取缓存文件（在线程池中执行）"""
+    with open(cache_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
 async def read_wiki_cache(owner: str, repo: str, repo_type: str, language: str) -> Optional[WikiCacheData]:
     """Reads wiki cache data from the file system."""
     cache_path = get_wiki_cache_path(owner, repo, repo_type, language)
     if os.path.exists(cache_path):
         try:
-            with open(cache_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return WikiCacheData(**data)
+            # 使用 asyncio.to_thread 在线程池中执行文件 I/O，避免阻塞事件循环
+            data = await asyncio.to_thread(_read_cache_file, cache_path)
+            return WikiCacheData(**data)
         except Exception as e:
             logger.error(f"Error reading wiki cache from {cache_path}: {e}")
             return None
     return None
+
+def _write_cache_file(cache_path: str, data: dict) -> None:
+    """同步写入缓存文件（在线程池中执行）"""
+    with open(cache_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)
 
 async def save_wiki_cache(data: WikiCacheRequest) -> bool:
     """Saves wiki cache data to the file system."""
@@ -455,8 +465,8 @@ async def save_wiki_cache(data: WikiCacheRequest) -> bool:
 
 
         logger.info(f"Writing cache file to: {cache_path}")
-        with open(cache_path, 'w', encoding='utf-8') as f:
-            json.dump(payload.model_dump(), f, indent=2)
+        # 使用 asyncio.to_thread 在线程池中执行文件 I/O，避免阻塞事件循环
+        await asyncio.to_thread(_write_cache_file, cache_path, payload.model_dump())
         logger.info(f"Wiki cache successfully saved to {cache_path}")
         return True
     except IOError as e:
