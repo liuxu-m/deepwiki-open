@@ -162,7 +162,7 @@ async def _call_llm_stream(
     调用 LLM 并收集完整响应（非流式）。
     复用 simple_chat.py 的 provider 分支逻辑。
     """
-    from api.config import get_model_config
+    from api.config import build_minimax_request_kwargs, get_model_config
 
     def _to_openai_messages(msgs: list, sys: str) -> list:
         """转换消息格式"""
@@ -207,13 +207,24 @@ async def _call_llm_stream(
         api_key = os.environ.get(api_key_env, "")
         oai_client = oai.AsyncOpenAI(api_key=api_key, base_url=base_url)
         model_kwargs = get_model_config(provider, model).get("model_kwargs", {})
-        resp = await oai_client.chat.completions.create(
-            model=model,
-            messages=messages_fmt,
-            temperature=model_kwargs.get("temperature", 0.7),
-            max_tokens=model_kwargs.get("max_tokens", 8192),
-            stream=False,
-        )
+        request_kwargs = {
+            "model": model,
+            "messages": messages_fmt,
+            "stream": False,
+        }
+        if provider == "minimax":
+            request_kwargs.update(
+                build_minimax_request_kwargs(
+                    model=model,
+                    model_config=model_kwargs,
+                    stream=False,
+                )
+            )
+            request_kwargs["messages"] = messages_fmt
+        else:
+            request_kwargs["temperature"] = model_kwargs.get("temperature", 0.7)
+            request_kwargs["max_tokens"] = model_kwargs.get("max_tokens", 8192)
+        resp = await oai_client.chat.completions.create(**request_kwargs)
         return resp.choices[0].message.content or ""
 
     # ── openrouter ──────────────────────────────────────────────────────────

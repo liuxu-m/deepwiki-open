@@ -255,6 +255,21 @@ def get_embedder_type():
     else:
         return 'openai'
 
+def build_minimax_request_kwargs(model: str, model_config: dict, stream: bool) -> dict:
+    """构造 MiniMax 专用请求参数，不影响 openai 分支。"""
+    request_kwargs = {
+        "model": model,
+        "stream": stream,
+        "temperature": model_config["temperature"],
+        "extra_body": {"reasoning_split": True},
+    }
+    if "top_p" in model_config:
+        request_kwargs["top_p"] = model_config["top_p"]
+    if not stream and "max_tokens" in model_config:
+        request_kwargs["max_tokens"] = model_config["max_tokens"]
+    return request_kwargs
+
+
 # Load repository and file filters configuration
 def load_repo_config():
     return load_json_config("repo.json")

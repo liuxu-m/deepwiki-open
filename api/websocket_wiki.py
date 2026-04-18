@@ -16,6 +16,7 @@ from api.config import (
     OPENAI_API_KEY,
     AWS_ACCESS_KEY_ID,
     AWS_SECRET_ACCESS_KEY,
+    build_minimax_request_kwargs,
     MINIMAX_API_KEY,
     MINIMAX_BASE_URL,
 )
@@ -516,15 +517,11 @@ This file contains...
                 api_key=MINIMAX_API_KEY,
                 base_url=MINIMAX_BASE_URL
             )
-            model_kwargs = {
-                "model": request.model,
-                "stream": True,
-                "temperature": model_config["temperature"],
-                "extra_body": {"reasoning_split": True}
-            }
-            # Only add top_p if it exists in the model config
-            if "top_p" in model_config:
-                model_kwargs["top_p"] = model_config["top_p"]
+            model_kwargs = build_minimax_request_kwargs(
+                model=request.model,
+                model_config=model_config,
+                stream=True,
+            )
 
             api_kwargs = model.convert_inputs_to_api_kwargs(
                 input=prompt,
