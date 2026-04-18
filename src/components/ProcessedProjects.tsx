@@ -13,6 +13,8 @@ interface ProcessedProject {
   repo_type: string;
   submittedAt: number;
   language: string;
+  summary?: string | null;
+  note?: string | null;
 }
 
 interface ProcessedProjectsProps {
@@ -33,6 +35,9 @@ export default function ProcessedProjects({
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'card' | 'list'>('card');
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
 
   // Default messages fallback
   const defaultMessages = {
@@ -99,6 +104,41 @@ export default function ProcessedProjects({
 
   const clearSearch = () => {
     setSearchQuery('');
+  };
+
+  const startEditingNote = (project: ProcessedProject) => {
+    setEditingProjectId(project.id);
+    setNoteDraft(project.note || '');
+  };
+
+  const cancelEditingNote = () => {
+    setEditingProjectId(null);
+    setNoteDraft('');
+  };
+
+  const saveNote = async (project: ProcessedProject) => {
+    try {
+      setSavingNoteId(project.id);
+      const response = await fetch(`/api/processed_projects/${project.id}/note`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: noteDraft }),
+      });
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(errorBody.detail || response.statusText);
+      }
+      const data = await response.json();
+      setProjects(prev => prev.map(item => (
+        item.id === project.id ? { ...item, note: data.note } : item
+      )));
+      setEditingProjectId(null);
+      setNoteDraft('');
+    } catch (e) {
+      alert(`Failed to save note: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    } finally {
+      setSavingNoteId(null);
+    }
   };
 
   const handleDelete = async (project: ProcessedProject) => {
@@ -211,6 +251,11 @@ export default function ProcessedProjects({
                   <h3 className="text-base font-semibold text-blue-500 hover:text-blue-600 mb-3 line-clamp-2 pr-6">
                     {project.name}
                   </h3>
+                  {project.summary && (
+                    <p className="text-sm text-[var(--muted)] mb-3 line-clamp-2 leading-6">
+                      {project.summary}
+                    </p>
+                  )}
                   <div className="flex flex-wrap gap-2 mb-3">
                     <span className="px-3 py-1 text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 rounded-full">
                       {project.repo_type}
@@ -223,6 +268,43 @@ export default function ProcessedProjects({
                     {t('processedOn')} {new Date(project.submittedAt).toLocaleDateString()}
                   </p>
                 </Link>
+                <div className="mt-3 border-t border-[var(--border-color)] pt-3">
+                  {editingProjectId === project.id ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={noteDraft}
+                        onChange={(e) => setNoteDraft(e.target.value.slice(0, 200))}
+                        className="w-full rounded-xl border border-[var(--border-color)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)]"
+                        rows={3}
+                        placeholder="添加备注..."
+                      />
+                      <div className="flex gap-2">
+                        <button onClick={() => saveNote(project)} disabled={savingNoteId === project.id} className="px-3 py-1.5 text-sm rounded-lg bg-blue-500 text-white disabled:opacity-50">
+                          保存
+                        </button>
+                        <button onClick={cancelEditingNote} className="px-3 py-1.5 text-sm rounded-lg border border-[var(--border-color)] text-[var(--foreground)]">
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-sm text-[var(--foreground)] line-clamp-3">
+                        {project.note || '添加备注'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          startEditingNote(project);
+                        }}
+                        className="mt-2 text-xs text-blue-500 hover:text-blue-600"
+                      >
+                        {project.note ? '编辑备注' : '添加备注'}
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <div key={project.id} className="group relative p-4 border border-[var(--border-color)] rounded-xl bg-[var(--card-bg)] hover:bg-blue-50/50 dark:hover:bg-blue-900/10 transition-colors">
@@ -242,16 +324,53 @@ export default function ProcessedProjects({
                     <h3 className="text-base font-medium text-blue-500 hover:text-blue-600 truncate">
                       {project.name}
                     </h3>
+                    {project.summary && (
+                      <p className="text-sm text-[var(--muted)] mt-1 line-clamp-2">
+                        {project.summary}
+                      </p>
+                    )}
                     <p className="text-xs text-[var(--muted)] mt-1">
                       {t('processedOn')} {new Date(project.submittedAt).toLocaleDateString()} • {project.repo_type} • {project.language}
                     </p>
+                    <p className="text-sm text-[var(--foreground)] mt-2 line-clamp-2">
+                      {project.note || '添加备注'}
+                    </p>
                   </div>
-                  <div className="flex gap-2 ml-4">
+                  <div className="flex gap-2 ml-4 items-center">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        startEditingNote(project);
+                      }}
+                      className="text-xs text-blue-500 hover:text-blue-600"
+                    >
+                      {project.note ? '编辑备注' : '添加备注'}
+                    </button>
                     <span className="px-3 py-1 text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 rounded-full">
                       {project.repo_type}
                     </span>
                   </div>
                 </Link>
+                {editingProjectId === project.id && (
+                  <div className="mt-3 space-y-2 border-t border-[var(--border-color)] pt-3">
+                    <textarea
+                      value={noteDraft}
+                      onChange={(e) => setNoteDraft(e.target.value.slice(0, 200))}
+                      className="w-full rounded-xl border border-[var(--border-color)] bg-[var(--background)] px-3 py-2 text-sm text-[var(--foreground)]"
+                      rows={3}
+                      placeholder="添加备注..."
+                    />
+                    <div className="flex gap-2">
+                      <button onClick={() => saveNote(project)} disabled={savingNoteId === project.id} className="px-3 py-1.5 text-sm rounded-lg bg-blue-500 text-white disabled:opacity-50">
+                        保存
+                      </button>
+                      <button onClick={cancelEditingNote} className="px-3 py-1.5 text-sm rounded-lg border border-[var(--border-color)] text-[var(--foreground)]">
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )
           ))}

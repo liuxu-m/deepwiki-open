@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -66,6 +67,8 @@ class ProcessedProjectEntry(BaseModel):
     repo_type: str # Renamed from type to repo_type for clarity with existing models
     submittedAt: int # Timestamp
     language: str # Extracted from filename
+    summary: Optional[str] = None
+    note: Optional[str] = None
 
 class RepoInfo(BaseModel):
     owner: str
@@ -155,6 +158,54 @@ class AuthorizationConfig(BaseModel):
     code: str = Field(..., description="Authorization code")
 
 from api.config import configs, WIKI_AUTH_MODE, WIKI_AUTH_CODE
+from api.project_metadata import get_project_note, upsert_project_note, delete_project_note
+
+
+def _read_project_cache_file(file_path: str) -> dict:
+    with open(file_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _strip_markdown_text(text: str) -> str:
+    cleaned = re.sub(r"```[\s\S]*?```", " ", text)
+    cleaned = re.sub(r"`([^`]*)`", r"\1", cleaned)
+    cleaned = re.sub(r"[#>*_\-\[\]!()]", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+
+def _truncate_summary(text: str, limit: int = 120) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
+
+
+def _extract_project_summary(data: dict) -> Optional[str]:
+    wiki_structure = data.get("wiki_structure") or {}
+    description = wiki_structure.get("description")
+    if isinstance(description, str) and description.strip():
+        return _truncate_summary(_strip_markdown_text(description))
+
+    generated_pages = data.get("generated_pages") or {}
+    preferred_titles = ["项目概览", "Overview", "Introduction"]
+
+    for page in generated_pages.values():
+        if not isinstance(page, dict):
+            continue
+        title = page.get("title")
+        content = page.get("content")
+        if isinstance(title, str) and title in preferred_titles and isinstance(content, str) and content.strip():
+            return _truncate_summary(_strip_markdown_text(content))
+
+    for page in generated_pages.values():
+        if not isinstance(page, dict):
+            continue
+        content = page.get("content")
+        if isinstance(content, str) and content.strip():
+            return _truncate_summary(_strip_markdown_text(content))
+
+    return None
 
 @app.get("/lang/config")
 async def get_lang_config():
@@ -548,6 +599,7 @@ async def delete_wiki_cache(
     if os.path.exists(cache_path):
         try:
             os.remove(cache_path)
+            delete_project_note(repo_type, owner, repo, language)
             logger.info(f"Successfully deleted wiki cache: {cache_path}")
             return {"message": f"Wiki cache for {owner}/{repo} ({language}) deleted successfully"}
         except Exception as e:
@@ -701,6 +753,17 @@ async def get_processed_projects():
                         language = parts[-1] # language is the last part
                         repo = "_".join(parts[2:-1]) # repo can contain underscores
 
+                        summary = None
+                        note = None
+                        try:
+                            cache_data = await asyncio.to_thread(_read_project_cache_file, file_path)
+                            if isinstance(cache_data, dict):
+                                summary = _extract_project_summary(cache_data)
+                        except Exception as cache_error:
+                            logger.warning(f"Could not extract project summary from {file_path}: {cache_error}")
+
+                        note = get_project_note(repo_type, owner, repo, language)
+
                         project_entries.append(
                             ProcessedProjectEntry(
                                 id=filename,
@@ -709,7 +772,9 @@ async def get_processed_projects():
                                 name=f"{owner}/{repo}",
                                 repo_type=repo_type,
                                 submittedAt=int(stats.st_mtime * 1000), # Convert to milliseconds
-                                language=language
+                                language=language,
+                                summary=summary,
+                                note=note,
                             )
                         )
                     else:
@@ -726,6 +791,25 @@ async def get_processed_projects():
     except Exception as e:
         logger.error(f"Error listing processed projects from {WIKI_CACHE_DIR}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to list processed projects from server cache.")
+
+
+class ProjectNoteUpdateRequest(BaseModel):
+    note: str = ""
+
+
+@app.put("/api/processed_projects/{project_id}/note")
+async def update_processed_project_note(project_id: str, req: ProjectNoteUpdateRequest):
+    parts = project_id.replace("deepwiki_cache_", "").replace(".json", "").split("_")
+    if len(parts) < 4:
+        raise HTTPException(status_code=400, detail="Invalid project id")
+
+    repo_type = parts[0]
+    owner = parts[1]
+    language = parts[-1]
+    repo = "_".join(parts[2:-1])
+
+    note = upsert_project_note(repo_type, owner, repo, language, req.note)
+    return {"project_id": project_id, "note": note}
 
 
 # ── 任务队列 API ──────────────────────────────────────────────────────────────
@@ -758,6 +842,7 @@ class TaskCreateRequest(BaseModel):
     excluded_files: Optional[str] = None
     included_dirs: Optional[str] = None
     included_files: Optional[str] = None
+    task_type: str = "generate"
 
 
 @app.get("/api/tasks")
@@ -785,6 +870,7 @@ async def api_create_task(req: TaskCreateRequest):
         excluded_files=req.excluded_files,
         included_dirs=req.included_dirs,
         included_files=req.included_files,
+        task_type=req.task_type,
     )
     return format_task_response(task)
 
