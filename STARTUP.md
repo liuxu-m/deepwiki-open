@@ -73,28 +73,33 @@ set DEEPWIKI_BASE_URL=http://127.0.0.1:8001
 ### 本地调用
 
 ```bash
-node .claude/skills/deepwiki-query/scripts/deepwiki.js https://github.com/owner/repo
-node .claude/skills/deepwiki-query/scripts/deepwiki-page.js https://github.com/owner/repo architecture-overview
-node .claude/skills/deepwiki-query/scripts/deepwiki-chat.js https://github.com/owner/repo
+node skills/deepwiki-query/scripts/deepwiki-projects.js
+node skills/deepwiki-query/scripts/deepwiki.js https://github.com/owner/repo
+node skills/deepwiki-query/scripts/deepwiki-page.js https://github.com/owner/repo architecture-overview
+node skills/deepwiki-query/scripts/deepwiki-chat.js https://github.com/owner/repo
 ```
 
 也支持简写仓库地址，例如：
 
 ```bash
-node .claude/skills/deepwiki-query/scripts/deepwiki.js github:owner/repo zh
+node skills/deepwiki-query/scripts/deepwiki.js github:owner/repo zh
 ```
 
-### 三个入口说明
+### 四个入口说明
 
-1. `deepwiki.js`
+1. `deepwiki-projects.js`
+   - 用途：列出 DeepWiki 中已经处理过的项目
+   - 参数：`[language]`
+
+2. `deepwiki.js`
    - 用途：查看项目 Wiki 结构总览
    - 参数：`<repo_url> [language]`
 
-2. `deepwiki-page.js`
+3. `deepwiki-page.js`
    - 用途：查看指定页面的 Markdown 内容
    - 参数：`<repo_url> <page_id> [language]`
 
-3. `deepwiki-chat.js`
+4. `deepwiki-chat.js`
    - 用途：输出适合继续追问的项目导览信息
    - 参数：`<repo_url> [language]`
 
@@ -119,7 +124,7 @@ export DEEPWIKI_BASE_URL="http://your-server:8001"
 - 当前 skill 只支持查询，不支持创建任务
 - 后端未启动时 skill 会查询失败
 - 后端需要提供现有接口：`GET /api/processed_projects` 与 `GET /api/wiki_cache`
-- skill 文件位于项目内 `.claude/skills/deepwiki-query/`，便于团队后续安装或同步到 `~/.claude/skills`
+- skill 文件位于项目内 `skills/deepwiki-query/`，便于团队后续安装或同步到 `~/.claude/skills`
 
 ### 为什么推荐 skill 而不是 MCP
 
