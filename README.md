@@ -122,6 +122,93 @@ yarn dev
 3. For private repositories, click "+ Add access tokens" and enter your GitHub or GitLab personal access token
 4. Click "Generate Wiki" and watch the magic happen!
 
+## 🧰 Claude Code Skill Query (Recommended for local/team querying)
+
+DeepWiki now ships with a project-local Claude Code skill bundle at `skills/deepwiki-query/`.
+
+This is the recommended query-only integration for Claude Code because it uses existing HTTP APIs directly and avoids extra MCP runtime dependency conflicts.
+
+### Skill location
+
+```text
+skills/deepwiki-query/
+```
+
+### Configure backend URL
+
+```bash
+export DEEPWIKI_BASE_URL="http://127.0.0.1:8001"
+```
+
+Windows:
+
+```bash
+set DEEPWIKI_BASE_URL=http://127.0.0.1:8001
+```
+
+### Skill entry scripts
+
+```bash
+node skills/deepwiki-query/scripts/deepwiki-projects.js
+node skills/deepwiki-query/scripts/deepwiki.js https://github.com/AsyncFuncAI/deepwiki-open
+node skills/deepwiki-query/scripts/deepwiki-page.js https://github.com/AsyncFuncAI/deepwiki-open architecture-overview
+node skills/deepwiki-query/scripts/deepwiki-chat.js https://github.com/AsyncFuncAI/deepwiki-open
+```
+
+### What the skill can do
+
+- `deepwiki-projects.js`: list processed projects already available in DeepWiki
+- `deepwiki.js`: show wiki structure overview for a processed repository
+- `deepwiki-page.js`: render a single wiki page as markdown by `page_id`
+- `deepwiki-chat.js`: print a guided overview for follow-up questioning
+
+### Current skill constraints
+
+- Query-only: it does not create tasks or trigger wiki generation
+- The target repository must already have generated wiki cache
+- It depends on the existing backend endpoints `GET /api/processed_projects` and `GET /api/wiki_cache`
+- If the backend is unreachable, the script will fail with a backend request error containing the configured base URL
+
+## 📦 Deploy Package
+
+If you want to deploy DeepWiki to a server quickly, the repository includes a ready-to-refresh deployment package under `deploy-package/`.
+
+### Refresh the package locally
+
+```bash
+bash deploy.sh
+```
+
+This script will:
+- build the latest Docker image
+- export it as `deepwiki-deploy.tar.gz`
+- refresh the files in `deploy-package/`
+
+### Package contents
+
+```text
+deploy-package/
+├── deepwiki-deploy.tar.gz
+├── docker-compose.yml
+├── deploy.sh
+└── DEPLOYMENT.md
+```
+
+### Typical server flow
+
+1. Run `bash deploy.sh` locally
+2. Upload `deploy-package/` to your server
+3. Load the image and start the stack with the packaged `docker-compose.yml`
+4. Point `DEEPWIKI_BASE_URL` from Claude Code machines to the deployed backend if you want to use the skill remotely
+
+## ⚠️ Current Limits and Notes
+
+- Claude Code skill querying is recommended over MCP in this repository's current workflow
+- The skill does not replace the main web UI; wiki generation is still done through the backend + web app flow
+- The packaged deployment flow is Docker-oriented; if you run manually, keep the backend reachable from the client that will query it
+- Some repositories may have generated wiki structure but not the `page_id` you expect; in that case `deepwiki-page.js` returns `Page not found`
+- Invalid repository input in the skill returns `invalid repo_url`
+
 ## 🔍 How It Works
 
 DeepWiki uses AI to:

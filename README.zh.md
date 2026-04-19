@@ -101,6 +101,93 @@ yarn dev
 3. 对于私有仓库，点击"+ 添加访问令牌"并输入您的GitHub或GitLab个人访问令牌
 4. 点击"生成Wiki"，见证奇迹的发生！
 
+## 🧰 Claude Code Skill 查询（推荐用于本地 / 团队查询）
+
+DeepWiki 现在在项目内提供了一个 Claude Code skill bundle，路径位于 `skills/deepwiki-query/`。
+
+对于 Claude Code 的只读查询场景，这是当前更推荐的集成方式，因为它直接调用现有 HTTP 接口，同时避免额外 MCP 运行时依赖冲突。
+
+### Skill 位置
+
+```text
+skills/deepwiki-query/
+```
+
+### 配置后端地址
+
+```bash
+export DEEPWIKI_BASE_URL="http://127.0.0.1:8001"
+```
+
+Windows：
+
+```bash
+set DEEPWIKI_BASE_URL=http://127.0.0.1:8001
+```
+
+### Skill 入口脚本
+
+```bash
+node skills/deepwiki-query/scripts/deepwiki-projects.js
+node skills/deepwiki-query/scripts/deepwiki.js https://github.com/AsyncFuncAI/deepwiki-open
+node skills/deepwiki-query/scripts/deepwiki-page.js https://github.com/AsyncFuncAI/deepwiki-open architecture-overview
+node skills/deepwiki-query/scripts/deepwiki-chat.js https://github.com/AsyncFuncAI/deepwiki-open
+```
+
+### Skill 能做什么
+
+- `deepwiki-projects.js`：列出 DeepWiki 中已经处理过的项目
+- `deepwiki.js`：查看已处理仓库的 Wiki 结构总览
+- `deepwiki-page.js`：按 `page_id` 输出单个 Wiki 页面 Markdown
+- `deepwiki-chat.js`：输出适合继续追问的项目导览信息
+
+### 当前 skill 限制
+
+- 只支持查询，不会创建任务，也不会触发 Wiki 生成
+- 目标仓库必须已经生成过 Wiki 缓存
+- 依赖现有后端接口：`GET /api/processed_projects` 与 `GET /api/wiki_cache`
+- 如果后端不可达，脚本会输出带 base URL 的后端请求错误信息
+
+## 📦 部署镜像包
+
+如果你想把 DeepWiki 快速部署到服务器，仓库中已经包含可刷新的部署包目录：`deploy-package/`。
+
+### 本地刷新部署包
+
+```bash
+bash deploy.sh
+```
+
+该脚本会：
+- 构建最新 Docker 镜像
+- 导出为 `deepwiki-deploy.tar.gz`
+- 刷新 `deploy-package/` 内的部署文件
+
+### 部署包内容
+
+```text
+deploy-package/
+├── deepwiki-deploy.tar.gz
+├── docker-compose.yml
+├── deploy.sh
+└── DEPLOYMENT.md
+```
+
+### 典型服务器流程
+
+1. 在本地执行 `bash deploy.sh`
+2. 将 `deploy-package/` 上传到服务器
+3. 在服务器上使用打包好的 `docker-compose.yml` 加载镜像并启动
+4. 如果你还要在远端部署后用 Claude Code skill 查询，请把查询机器上的 `DEEPWIKI_BASE_URL` 指向部署后的后端
+
+## ⚠️ 当前限制与说明
+
+- 在本仓库当前工作流中，Claude Code 查询更推荐使用 skill，而不是 MCP
+- skill 不会替代主 Web UI；Wiki 生成仍然走后端 + Web 应用流程
+- 当前部署包流程以 Docker 为核心；如果你手动部署，请确保后端对查询客户端可达
+- 某些仓库可能已经有 Wiki 结构，但没有你预期的 `page_id`；此时 `deepwiki-page.js` 会返回 `Page not found`
+- 非法仓库输入在 skill 中会返回 `invalid repo_url`
+
 ## 🔍 工作原理
 
 DeepWiki使用AI来：
