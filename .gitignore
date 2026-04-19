@@ -86,5 +86,6 @@ graphify-out/
 .trae/
 skills-lock.json
 .playwright-cli/
+docs/superpowers/plans/
 DEPLOYMENT.md
 
