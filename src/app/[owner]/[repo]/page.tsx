@@ -319,7 +319,7 @@ export default function RepoWikiPage() {
     try {
       const url = new URL(repoUrl);
       const hostname = url.hostname;
-      
+
       if (hostname === 'github.com' || hostname.includes('github')) {
         // GitHub URL format: https://github.com/owner/repo/blob/branch/path
         return `${repoUrl}/blob/${defaultBranch}/${filePath}`;
@@ -337,6 +337,51 @@ export default function RepoWikiPage() {
     // Fallback to just the file path
     return filePath;
   }, [effectiveRepoInfo, defaultBranch]);
+
+  const generateCitationUrl = useCallback((filePath: string, startLine: string, endLine?: string): string => {
+    const baseFileUrl = generateFileUrl(filePath);
+
+    if (!effectiveRepoInfo.repoUrl || effectiveRepoInfo.type === 'local' || baseFileUrl === filePath) {
+      return '';
+    }
+
+    try {
+      const url = new URL(effectiveRepoInfo.repoUrl);
+      const hostname = url.hostname;
+
+      if (hostname === 'bitbucket.org' || hostname.includes('bitbucket')) {
+        return `${baseFileUrl}#lines-${startLine}${endLine ? `:${endLine}` : ''}`;
+      }
+
+      return `${baseFileUrl}#L${startLine}${endLine ? `-L${endLine}` : ''}`;
+    } catch {
+      return '';
+    }
+  }, [effectiveRepoInfo, generateFileUrl]);
+
+  const normalizeSourceCitationLinks = useCallback((markdown: string): string => {
+    return markdown.replace(
+      /\[([^\]\n]+?):(\d+)(?:-(\d+))?\]\(([^)]*)\)/g,
+      (match, filePath, startLine, endLine, href) => {
+        const normalizedUrl = generateCitationUrl(filePath, startLine, endLine);
+        if (!normalizedUrl) {
+          return match;
+        }
+
+        const trimmedHref = href.trim();
+        const shouldRewrite =
+          !trimmedHref ||
+          trimmedHref === '#' ||
+          trimmedHref.startsWith('#source:') ||
+          !trimmedHref.includes(filePath) ||
+          (!trimmedHref.includes('#L') && !trimmedHref.includes('#lines-'));
+
+        return shouldRewrite
+          ? `[${filePath}:${startLine}${endLine ? `-${endLine}` : ''}](${normalizedUrl})`
+          : match;
+      }
+    );
+  }, [generateCitationUrl]);
 
   // Memoize repo info to avoid triggering updates in callbacks
 
@@ -499,6 +544,10 @@ ${filePaths.map(path => `- [${path}](${generateFileUrl(path)})`).join('\n')}
 
 Immediately after the \`<details>\` block, the main title of the page should be a H1 Markdown heading: \`# ${page.title}\`.
 
+The repository base URL is \`${effectiveRepoInfo.repoUrl || repoUrl}\` and the default branch is \`${defaultBranch}\`.
+Use those values when constructing every source citation link.
+Keep the visible citation text concise as \`file_path:line\` or \`file_path:start-end\`, but make every markdown link target point to the original repository file and line range.
+
 Based ONLY on the content of the \`[RELEVANT_SOURCE_FILES]\`:
 
 1.  **Introduction:** Start with a concise introduction (1-2 paragraphs) explaining the purpose, scope, and high-level overview of "${page.title}" within the context of the overall project. If relevant, and if information is available in the provided files, link to other potential wiki pages using the format \`[Link Text](#page-anchor-or-id)\`.
@@ -557,7 +606,12 @@ Based ONLY on the content of the \`[RELEVANT_SOURCE_FILES]\`:
 6.  **Source Citations (EXTREMELY IMPORTANT):**
     *   For EVERY piece of significant information, explanation, diagram, table entry, or code snippet, you MUST cite the specific source file(s) and relevant line numbers from which the information was derived.
     *   Place citations at the end of the paragraph, under the diagram/table, or after the code snippet.
-    *   Use the exact format: \`Sources: [filename.ext:start_line-end_line]()\` for a range, or \`Sources: [filename.ext:line_number]()\` for a single line. Multiple files can be cited: \`Sources: [file1.ext:1-10](), [file2.ext:5](), [dir/file3.ext]()\` (if the whole file is relevant and line numbers are not applicable or too broad).
+    *   Use the exact format: \`Sources: [filename.ext:start_line-end_line](full_repository_url_to_file#Lstart-Lend)\` for a range, or \`Sources: [filename.ext:line_number](full_repository_url_to_file#Lline)\` for a single line.
+    *   The visible citation text MUST stay concise as the file path and line numbers only. The markdown link target MUST be the original repository URL for that file and line range.
+    *   For GitHub-style repositories use \`https://host/owner/repo/blob/branch/path/to/file#L10\` or \`#L10-L30\`.
+    *   For GitLab-style repositories use \`https://host/owner/repo/-/blob/branch/path/to/file#L10\` or \`#L10-L30\`.
+    *   For Bitbucket-style repositories use \`https://host/owner/repo/src/branch/path/to/file#lines-10\` or \`#lines-10:30\`.
+    *   Multiple files can be cited in one line, each with its own real link target.
     *   If an entire section is overwhelmingly based on one or two files, you can cite them under the section heading in addition to more specific citations within the section.
     *   IMPORTANT: You MUST cite AT LEAST 5 different source files throughout the wiki page to ensure comprehensive coverage.
 
@@ -573,7 +627,7 @@ IMPORTANT: Generate the content in ${language === 'en' ? 'English' :
             language === 'zh-tw' ? 'Traditional Chinese (繁體中文)' :
             language === 'es' ? 'Spanish (Español)' :
             language === 'kr' ? 'Korean (한국어)' :
-            language === 'vi' ? 'Vietnamese (Tiếng Việt)' : 
+            language === 'vi' ? 'Vietnamese (Tiếng Việt)' :
             language === "pt-br" ? "Brazilian Portuguese (Português Brasileiro)" :
             language === "fr" ? "Français (French)" :
             language === "ru" ? "Русский (Russian)" :
@@ -703,6 +757,7 @@ Remember:
 
         // Clean up markdown delimiters
         content = content.replace(/^```markdown\s*/i, '').replace(/```\s*$/i, '');
+        content = normalizeSourceCitationLinks(content);
 
         console.log(`Received content for ${page.title}, length: ${content.length} characters`);
 
@@ -738,7 +793,7 @@ Remember:
         setLoadingMessage(undefined); // Clear specific loading message
       }
     });
-  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, language, activeContentRequests, generateFileUrl]);
+  }, [generatedPages, currentToken, effectiveRepoInfo, selectedProviderState, selectedModelState, isCustomSelectedModelState, customSelectedModelState, modelExcludedDirs, modelExcludedFiles, language, activeContentRequests, generateFileUrl, normalizeSourceCitationLinks]);
 
   // Determine the wiki structure from repository data
   const determineWikiStructure = useCallback(async (fileTree: string, readme: string, owner: string, repo: string) => {

@@ -112,27 +112,31 @@ const Markdown: React.FC<MarkdownProps> = ({ content }) => {
 
       // Check if this is a source citation link (format: "filename:line" or "filename:start-end")
       const sourceMatch = linkText.match(/^(.+?):(\d+)(?:-(\d+))?$/);
+      const hasRealHref = Boolean(href && href !== '#');
 
-      // Build GitHub URL if it's a source link
+      // Preserve real source URLs when present, otherwise fall back to the placeholder flow
       let targetHref = href || '#';
-      if (sourceMatch && typeof window !== 'undefined') {
+      if (sourceMatch && !hasRealHref && typeof window !== 'undefined') {
         const filePath = sourceMatch[1];
         const startLine = sourceMatch[2];
         const endLine = sourceMatch[3];
-        // Use a placeholder that will be replaced with actual repo info
-        // The actual URL will be built in the page component
         targetHref = `#source:${filePath}:${startLine}${endLine ? '-' + endLine : ''}`;
       }
 
+      const shouldHandleAsFallbackCitation = Boolean(
+        sourceMatch && (!href || href === '#' || href.startsWith('#source:'))
+      );
+
+      const fallbackSourceMatch = shouldHandleAsFallbackCitation ? sourceMatch : null;
+
       const handleClick = (e: React.MouseEvent) => {
-        if (sourceMatch && typeof window !== 'undefined') {
+        if (fallbackSourceMatch && typeof window !== 'undefined') {
           e.preventDefault();
-          // Dispatch custom event with source info
           window.dispatchEvent(new CustomEvent('openSourceLink', {
             detail: {
-              filePath: sourceMatch[1],
-              startLine: parseInt(sourceMatch[2], 10),
-              endLine: sourceMatch[3] ? parseInt(sourceMatch[3], 10) : undefined,
+              filePath: fallbackSourceMatch[1],
+              startLine: parseInt(fallbackSourceMatch[2], 10),
+              endLine: fallbackSourceMatch[3] ? parseInt(fallbackSourceMatch[3], 10) : undefined,
             }
           }));
         }
@@ -142,7 +146,7 @@ const Markdown: React.FC<MarkdownProps> = ({ content }) => {
         <a
           href={targetHref}
           className={`text-purple-600 dark:text-purple-400 hover:underline font-medium ${sourceMatch ? 'cursor-pointer' : ''}`}
-          target={href && !sourceMatch ? '_blank' : undefined}
+          target={targetHref && !targetHref.startsWith('#source:') ? '_blank' : undefined}
           rel="noopener noreferrer"
           onClick={handleClick}
           {...props}

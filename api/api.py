@@ -855,11 +855,22 @@ async def api_list_tasks():
 @app.post("/api/tasks", status_code=201)
 async def api_create_task(req: TaskCreateRequest):
     """提交新的 Wiki 生成任务"""
+    repo_url = req.repo_url.strip()
+    if req.repo_type != "local":
+        placeholder_prefix = f"http://example/{req.owner}/{req.repo}"
+        if repo_url == placeholder_prefix or repo_url.startswith("http://example/"):
+            if req.repo_type == "gitlab":
+                repo_url = f"https://gitlab.com/{req.owner}/{req.repo}"
+            elif req.repo_type == "bitbucket":
+                repo_url = f"https://bitbucket.org/{req.owner}/{req.repo}"
+            else:
+                repo_url = f"https://github.com/{req.owner}/{req.repo}"
+
     task = db_create_task(
         owner=req.owner,
         repo=req.repo,
         repo_type=req.repo_type,
-        repo_url=req.repo_url,
+        repo_url=repo_url,
         language=req.language,
         is_comprehensive=req.is_comprehensive,
         provider=req.provider,
