@@ -120,6 +120,17 @@ def _normalize_wiki_output(wiki_struct: dict, generated_pages: dict, task: dict)
                    for sec in struct.get("sections", []))
     ][:10] if struct.get("sections") else []
 
+    # 将 worker 风格 sections 转换为 API 期望的字段
+    normalized_sections = []
+    for section in struct.get("sections", []):
+        normalized_section = dict(section)
+        if "page_refs" in normalized_section:
+            normalized_section["pages"] = normalized_section.pop("page_refs")
+        if "subsection_refs" in normalized_section:
+            normalized_section["subsections"] = normalized_section.pop("subsection_refs")
+        normalized_sections.append(normalized_section)
+    struct["sections"] = normalized_sections
+
     # 转换 wiki_structure.pages 中的字段，并将内容合并进来
     for page in struct.get("pages", []):
         if "relevant_files" in page:

@@ -1,4 +1,4 @@
-from api.task_worker import expand_relevant_files
+from api.task_worker import expand_relevant_files, _normalize_wiki_output
 
 
 def test_expand_relevant_files_replaces_directories_with_matching_files():
@@ -44,3 +44,46 @@ def test_expand_relevant_files_keeps_explicit_files_and_caps_output():
     assert result[0] == 'README.md'
     assert len(result) == 3
     assert 'multica/models/' not in result
+
+
+def test_normalize_wiki_output_converts_section_refs_to_api_fields():
+    wiki_struct = {
+        'title': 'Demo Wiki',
+        'description': 'demo',
+        'pages': [
+            {
+                'id': 'page-1',
+                'title': 'Overview',
+                'importance': 'high',
+                'relevant_files': ['README.md'],
+                'related_pages': [],
+                'parent_section': '',
+            }
+        ],
+        'sections': [
+            {
+                'id': 's-overview',
+                'title': 'Overview',
+                'page_refs': ['page-1'],
+                'subsection_refs': [],
+            }
+        ],
+    }
+    generated_pages = {
+        'page-1': {
+            'id': 'page-1',
+            'title': 'Overview',
+            'importance': 'high',
+            'relevant_files': ['README.md'],
+            'related_pages': [],
+            'content': 'hello',
+        }
+    }
+
+    struct, pages = _normalize_wiki_output(wiki_struct, generated_pages, {})
+
+    assert struct['sections'][0]['pages'] == ['page-1']
+    assert struct['sections'][0]['subsections'] == []
+    assert 'page_refs' not in struct['sections'][0]
+    assert 'subsection_refs' not in struct['sections'][0]
+    assert pages['page-1']['filePaths'] == ['README.md']
