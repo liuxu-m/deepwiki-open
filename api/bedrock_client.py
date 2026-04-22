@@ -11,10 +11,6 @@ from typing import Dict, Any, Optional, List, Generator, Union, AsyncGenerator, 
 from adalflow.core.model_client import ModelClient
 from adalflow.core.types import ModelType, GeneratorOutput, EmbedderOutput
 
-# Configure logging
-from api.logging_config import setup_logging
-
-setup_logging()
 log = logging.getLogger(__name__)
 
 class BedrockClient(ModelClient):

@@ -57,12 +57,6 @@ from adalflow.core.embedder import (
 import adalflow.core.functional as F
 from adalflow.components.model_client.utils import parse_embedding_response
 
-from api.logging_config import setup_logging
-
-# # Disable tqdm progress bars
-# os.environ["TQDM_DISABLE"] = "1"
-
-setup_logging()
 log = logging.getLogger(__name__)
 
 def get_first_message_content(completion: ChatCompletion) -> str:

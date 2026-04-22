@@ -13,9 +13,6 @@ import google.generativeai as genai
 import asyncio
 
 # Configure logging
-from api.logging_config import setup_logging
-
-setup_logging()
 logger = logging.getLogger(__name__)
 
 

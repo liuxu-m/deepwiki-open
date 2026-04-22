@@ -30,7 +30,71 @@ export interface ChatCompletionRequest {
   language?: string;
   excluded_dirs?: string;
   excluded_files?: string;
+  included_dirs?: string;
+  included_files?: string;
 }
+
+export const sendChatCompletionRequest = async (
+  request: ChatCompletionRequest,
+): Promise<string> => {
+  let content = '';
+
+  try {
+    const ws = new WebSocket(getWebSocketUrl());
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error('WebSocket connection timeout'));
+      }, 5000);
+
+      ws.onopen = () => {
+        clearTimeout(timeout);
+        ws.send(JSON.stringify(request));
+        resolve();
+      };
+
+      ws.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error('WebSocket connection failed'));
+      };
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      ws.onmessage = (event) => {
+        content += event.data;
+      };
+      ws.onclose = () => resolve();
+      ws.onerror = () => reject(new Error('WebSocket error during message reception'));
+    });
+
+    return content;
+  } catch {
+    const response = await fetch('/api/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'No error details available');
+      throw new Error(`Chat request failed: ${response.status} ${response.statusText} ${errorText}`);
+    }
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    if (!reader) {
+      throw new Error('Failed to get response reader');
+    }
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      content += decoder.decode(value, { stream: true });
+    }
+    content += decoder.decode();
+    return content;
+  }
+};
 
 /**
  * Creates a WebSocket connection for chat completions

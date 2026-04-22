@@ -8,10 +8,6 @@ from adalflow.core.component import DataComponent
 import requests
 import os
 
-# Configure logging
-from api.logging_config import setup_logging
-
-setup_logging()
 logger = logging.getLogger(__name__)
 
 class OllamaModelNotFoundError(Exception):

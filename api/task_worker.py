@@ -18,8 +18,10 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
+from api.chat_runtime import run_chat_once
 from api.task_queue import (
     cancel_task as db_cancel_task,
     get_next_queued_task,
@@ -32,6 +34,13 @@ from api.task_queue import (
     update_task_status,
 )
 from api.prompts import SIMPLE_CHAT_SYSTEM_PROMPT
+from api.wiki_generation import (
+    build_context_text,
+    build_shared_page_prompt,
+    build_shared_structure_prompt,
+    normalize_source_citation_links,
+    validate_generated_wiki_page,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -201,186 +210,22 @@ def _save_wiki_output_to_project_cache(wiki_data: dict) -> None:
     except Exception as e:
         logger.warning(f"[project-cache] Failed to save wiki cache: {e}")
 
-# ── LLM 调用工具 ──────────────────────────────────────────────────────────────
-
-async def _call_llm_stream(
-    messages: list,
-    provider: str,
-    model: str,
-    system_prompt: str,
-    timeout: float,
-) -> str:
-    """
-    调用 LLM 并收集完整响应（非流式）。
-    复用 simple_chat.py 的 provider 分支逻辑。
-    """
-    from api.config import build_minimax_request_kwargs, get_model_config
-
-    def _to_openai_messages(msgs: list, sys: str) -> list:
-        """转换消息格式"""
-        result = [{"role": "system", "content": sys}]
-        for m in msgs:
-            role = m.get("role", "user")
-            if role == "assistant":
-                role = "model"
-            result.append({"role": role, "content": m.get("content", "")})
-        return result
-
-    messages_fmt = _to_openai_messages(messages, system_prompt)
-
-    # ── google ──────────────────────────────────────────────────────────────
-    if provider == "google":
-        import google.generativeai as genai
-        model_kwargs = get_model_config("google", model).get("model_kwargs", {})
-        gen_model = genai.GenerativeModel(
-            model_name=model,
-            system_instruction=system_prompt,
-            generation_config=genai.GenerationConfig(
-                temperature=model_kwargs.get("temperature", 0.7),
-                max_output_tokens=model_kwargs.get("max_tokens", 8192),
-            ),
-        )
-        contents = []
-        for m in messages:
-            role = "user" if m.get("role") == "user" else "model"
-            contents.append({"role": role, "parts": [m.get("content", "")]})
-
-        def _sync_call():
-            resp = gen_model.generate_content(contents)
-            return resp.text or ""
-
-        return await asyncio.to_thread(_sync_call)
-
-    # ── openai / minimax ────────────────────────────────────────────────────
-    if provider in ("openai", "minimax"):
-        import openai as oai
-        base_url = os.environ.get("MINIMAX_BASE_URL") if provider == "minimax" else None
-        api_key_env = "MINIMAX_API_KEY" if provider == "minimax" else "OPENAI_API_KEY"
-        api_key = os.environ.get(api_key_env, "")
-        oai_client = oai.AsyncOpenAI(api_key=api_key, base_url=base_url)
-        model_kwargs = get_model_config(provider, model).get("model_kwargs", {})
-        request_kwargs = {
-            "model": model,
-            "messages": messages_fmt,
-            "stream": False,
-        }
-        if provider == "minimax":
-            request_kwargs.update(
-                build_minimax_request_kwargs(
-                    model=model,
-                    model_config=model_kwargs,
-                    stream=False,
-                )
-            )
-            request_kwargs["messages"] = messages_fmt
-        else:
-            request_kwargs["temperature"] = model_kwargs.get("temperature", 0.7)
-            request_kwargs["max_tokens"] = model_kwargs.get("max_tokens", 8192)
-        resp = await oai_client.chat.completions.create(**request_kwargs)
-        return resp.choices[0].message.content or ""
-
-    # ── openrouter ──────────────────────────────────────────────────────────
-    if provider == "openrouter":
-        from api.openrouter_client import OpenRouterClient
-        from adalflow.core.types import ModelType
-        client = OpenRouterClient()
-        model_kwargs = get_model_config("openrouter", model).get("model_kwargs", {})
-        api_kwargs = client.convert_inputs_to_api_kwargs(
-            input=messages_fmt,
-            model_kwargs={**model_kwargs, "stream": False},
-            model_type=ModelType.LLM,
-        )
-        resp = await client.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-        return client.parse_chat_completion(resp) or ""
-
-    # ── ollama ──────────────────────────────────────────────────────────────
-    if provider == "ollama":
-        import ollama as oll
-        resp = await asyncio.to_thread(
-            oll.chat,
-            model=model,
-            messages=messages_fmt,
-            stream=False,
-        )
-        return resp.message.content or ""
-
-    # ── bedrock ─────────────────────────────────────────────────────────────
-    if provider == "bedrock":
-        from api.bedrock_client import BedrockClient
-        from adalflow.core.types import ModelType
-        client = BedrockClient()
-        model_kwargs = get_model_config("bedrock", model).get("model_kwargs", {})
-        api_kwargs = client.convert_inputs_to_api_kwargs(
-            input=messages_fmt,
-            model_kwargs={**model_kwargs, "stream": False},
-            model_type=ModelType.LLM,
-        )
-        resp = await client.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-        return client.extract_response_text(resp) or ""
-
-    # ── azure ────────────────────────────────────────────────────────────────
-    if provider == "azure":
-        from api.azureai_client import AzureAIClient
-        from adalflow.core.types import ModelType
-        client = AzureAIClient()
-        model_kwargs = get_model_config("azure", model).get("model_kwargs", {})
-        api_kwargs = client.convert_inputs_to_api_kwargs(
-            input=messages_fmt,
-            model_kwargs={**model_kwargs, "stream": False},
-            model_type=ModelType.LLM,
-        )
-        resp = await client.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-        return client.parse_chat_completion(resp) or ""
-
-    # ── dashscope ───────────────────────────────────────────────────────────
-    if provider == "dashscope":
-        from api.dashscope_client import DashscopeClient
-        from adalflow.core.types import ModelType
-        client = DashscopeClient()
-        model_kwargs = get_model_config("dashscope", model).get("model_kwargs", {})
-        api_kwargs = client.convert_inputs_to_api_kwargs(
-            input=messages_fmt,
-            model_kwargs={**model_kwargs, "stream": False},
-            model_type=ModelType.LLM,
-        )
-        resp = await client.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
-        return client.parse_chat_completion(resp) or ""
-
-    raise ValueError(f"Unsupported provider: {provider}")
-
-async def call_llm_with_timeout(
-    messages: list,
-    provider: str,
-    model: str,
-    system_prompt: str,
-    timeout: float = LLM_TIMEOUT,
-) -> str:
-    """调用 LLM，超时抛出 asyncio.TimeoutError"""
-    return await asyncio.wait_for(
-        _call_llm_stream(messages, provider, model, system_prompt, timeout),
-        timeout=timeout,
-    )
-
+# ── Wiki 结构解析 ─────────────────────────────────────────────────────────────
 async def call_llm_with_retry(
     task_id: str,
-    messages: list,
-    provider: str,
-    model: str,
-    system_prompt: str,
+    request: SimpleNamespace,
     step_name: str,
     max_retries: int = 3,
 ) -> str:
     """
-    带重试的 LLM 调用。
+    带重试的同源聊天调用。
     - 超时 / 网络错误 / 空响应 → 重试
     - 超过 max_retries → 抛出异常
     """
     last_error: Optional[str] = None
     for attempt in range(max_retries + 1):
         try:
-            result = await call_llm_with_timeout(
-                messages, provider, model, system_prompt, LLM_TIMEOUT
-            )
+            result = await asyncio.wait_for(run_chat_once(request), timeout=LLM_TIMEOUT)
             if not result or not result.strip():
                 raise ValueError(f"LLM returned empty response on step '{step_name}'")
             return result
@@ -492,49 +337,6 @@ IMPORTANT FORMATTING RULES:
 
 Focus on providing accurate, detailed content that helps developers understand and use the codebase."""
 
-def build_page_content_prompt(
-    page: dict,
-    wiki_struct: dict,
-    repo_files: list,
-    language: str,
-) -> str:
-    """构建页面内容的 user prompt"""
-    page_title = page.get("title", "")
-    page_desc = page.get("description", "")
-    relevant_files = expand_relevant_files(page.get("relevant_files", []), repo_files)
-    repo_name = wiki_struct.get("title", "")
-
-    files_context = ""
-    if relevant_files:
-        files_context = "\n".join(f"  - {f}" for f in relevant_files[:10])
-
-    comp_type = "comprehensive" if language != "en" else "comprehensive"
-    lang_str = {
-        "zh": "Chinese (中文)", "ja": "Japanese (日本語)", "ko": "Korean (한국어)",
-        "vi": "Vietnamese (Tiếng Việt)", "es": "Spanish (Español)",
-        "fr": "French (Français)", "ru": "Russian (Русский)", "pt-br": "Portuguese (Português)"
-    }.get(language, "English")
-
-    return f"""Create a detailed wiki page for: {page_title}
-
-Page Description:
-{page_desc}
-
-Repository: {repo_name}
-
-Relevant Files from the codebase:
-{files_context or '  (no specific files referenced)'}
-
-Please write a comprehensive wiki page that:
-1. Explains the purpose and functionality of this section
-2. Shows how components work together
-3. Includes relevant code examples from the repository
-4. Uses diagrams (Mermaid format) where appropriate
-5. Is written in {lang_str}
-
-Return the page content in markdown format. Start directly with the title as ## heading.
-"""
-
 # ── 核心 Wiki 生成逻辑 ───────────────────────────────────────────────────────
 
 async def run_task(task: dict) -> None:
@@ -584,12 +386,11 @@ async def run_task(task: dict) -> None:
     # 获取文件列表用于 LLM
     if hasattr(rag, "db_manager") and rag.db_manager:
         db: DatabaseManager = rag.db_manager
-        # 获取文件树
         file_list = []
         if hasattr(db, "file_list"):
-            file_list = db.file_list[:200] if db.file_list else []
+            file_list = db.file_list if db.file_list else []
         elif hasattr(db, "docs") and db.docs:
-            file_list = [d.meta_data.get("file_path", "") for d in db.docs[:200] if hasattr(d, "meta_data")]
+            file_list = [d.meta_data.get("file_path", "") for d in db.docs if hasattr(d, "meta_data")]
 
         # 获取 README 内容
         readme_content = ""
@@ -610,9 +411,27 @@ async def run_task(task: dict) -> None:
                     break
 
         repo_files = file_list
+        file_contents: dict[str, str] = {}
+        context_documents: list[dict[str, str]] = []
+        if hasattr(db, "docs") and db.docs:
+            for doc in db.docs:
+                if not hasattr(doc, "meta_data"):
+                    continue
+                file_path = doc.meta_data.get("file_path", "")
+                if not file_path:
+                    continue
+                if hasattr(doc, "text") and doc.text:
+                    if file_path not in file_contents:
+                        file_contents[file_path] = doc.text
+                    context_documents.append({
+                        "file_path": file_path,
+                        "text": doc.text,
+                    })
     else:
         repo_files = []
         readme_content = ""
+        file_contents = {}
+        context_documents = []
 
     # ── 阶段 2: structure ──────────────────────────────────────────────────
     update_task_status(task_id, "running", current_step="structure")
@@ -625,7 +444,7 @@ async def run_task(task: dict) -> None:
         language_name=language,
     )
 
-    structure_prompt = _build_structure_prompt(
+    structure_prompt = build_shared_structure_prompt(
         owner=owner,
         repo=repo,
         repo_files=repo_files,
@@ -634,12 +453,24 @@ async def run_task(task: dict) -> None:
         is_comprehensive=bool(task.get("is_comprehensive", 1)),
     )
 
-    structure_text = await call_llm_with_retry(
-        task_id=task_id,
-        messages=[{"role": "user", "content": structure_prompt}],
+    structure_request = SimpleNamespace(
+        repo_url=repo_url,
+        messages=[SimpleNamespace(role='user', content=structure_prompt)],
+        filePath=None,
+        token=task.get('token'),
+        type=repo_type,
         provider=provider,
         model=model,
-        system_prompt=system_prompt,
+        language=language,
+        excluded_dirs=task.get('excluded_dirs'),
+        excluded_files=task.get('excluded_files'),
+        included_dirs=task.get('included_dirs'),
+        included_files=task.get('included_files'),
+    )
+
+    structure_text = await call_llm_with_retry(
+        task_id=task_id,
+        request=structure_request,
         step_name="wiki_structure",
     )
 
@@ -702,21 +533,69 @@ async def run_task(task: dict) -> None:
 
         # 生成页面内容
         page_system = build_page_system_prompt(language, repo_name)
-        page_prompt = build_page_content_prompt(
-            page=page,
-            wiki_struct=wiki_struct,
-            repo_files=repo_files,
+        retrieval_query = f"{page.get('title', '')}\n{page.get('description', '')}".strip()
+        relevant_page_files = expand_relevant_files(page.get("relevant_files", []), repo_files)
+        page_context_docs = []
+        try:
+            retrieved_documents = await asyncio.to_thread(rag, retrieval_query, language)
+            if retrieved_documents and retrieved_documents[0].documents:
+                page_context_docs = [
+                    {
+                        "file_path": doc.meta_data.get("file_path", "unknown"),
+                        "text": doc.text,
+                    }
+                    for doc in retrieved_documents[0].documents
+                    if hasattr(doc, "meta_data") and hasattr(doc, "text")
+                ]
+                retrieved_file_paths = [doc["file_path"] for doc in page_context_docs if doc.get("file_path")]
+                if retrieved_file_paths:
+                    relevant_page_files = list(dict.fromkeys(retrieved_file_paths))
+        except Exception as retrieval_error:
+            logger.warning(f"[{task_id}] Per-page retrieval failed for {page.get('title')}: {retrieval_error}")
+            page_context_docs = [doc for doc in context_documents if doc["file_path"] in relevant_page_files]
+
+        page_context_text = build_context_text(page_context_docs)
+        file_contents_for_page = {path: file_contents[path] for path in relevant_page_files if path in file_contents}
+        page_prompt = build_shared_page_prompt(
+            page_title=page.get("title", ""),
+            file_paths=relevant_page_files,
             language=language,
+            repo_url=repo_url,
+            default_branch="main",
+            file_contents=file_contents_for_page,
+        )
+        if page_context_text:
+            page_prompt = f"{page_prompt}\n\n<START_OF_CONTEXT>\n{page_context_text}\n<END_OF_CONTEXT>"
+
+        page_request = SimpleNamespace(
+            repo_url=repo_url,
+            messages=[SimpleNamespace(role='user', content=page_prompt)],
+            filePath=None,
+            token=task.get('token'),
+            type=repo_type,
+            provider=provider,
+            model=model,
+            language=language,
+            excluded_dirs=task.get('excluded_dirs'),
+            excluded_files=task.get('excluded_files'),
+            included_dirs=task.get('included_dirs'),
+            included_files=task.get('included_files'),
         )
 
         page_content = await call_llm_with_retry(
             task_id=task_id,
-            messages=[{"role": "user", "content": page_prompt}],
-            provider=provider,
-            model=model,
-            system_prompt=page_system,
+            request=page_request,
             step_name=f"page:{page.get('title', page_id)}",
         )
+        page_content = normalize_source_citation_links(page_content, repo_url, "main")
+        is_valid, validation_reason = validate_generated_wiki_page(page_content, relevant_page_files)
+        if not is_valid:
+            page_content = (
+                f"# {page.get('title', '')}\n\n"
+                f"Unable to generate a grounded wiki page for this section.\n\n"
+                f"Reason: {validation_reason}\n\n"
+                f"Relevant source files: {', '.join(relevant_page_files)}"
+            )
 
         generated_pages[page_id] = {
             **page,
@@ -774,135 +653,6 @@ async def run_task(task: dict) -> None:
     )
     logger.info(f"[{task_id}] Task completed successfully")
 
-
-def _build_structure_prompt(
-    owner: str,
-    repo: str,
-    repo_files: list,
-    readme: str,
-    language: str,
-    is_comprehensive: bool,
-) -> str:
-    """构建 Wiki 结构生成的 prompt（与前端 page.tsx 保持一致）"""
-
-    lang_map = {
-        "zh": "Mandarin Chinese (中文)", "ja": "Japanese (日本語)",
-        "ko": "Korean (한국어)", "vi": "Vietnamese (Tiếng Việt)",
-        "es": "Spanish (Español)", "fr": "French (Français)",
-        "ru": "Russian (Русский)", "pt-br": "Brazilian Portuguese (Português Brasileiro)",
-    }
-    lang_name = lang_map.get(language, "English")
-
-    file_tree = "\n".join(repo_files[:200]) if repo_files else "(no files available)"
-
-    base = f"""Analyze this {repo} repository and create a wiki structure for it.
-
-1. The complete file tree of the project:
-<file_tree>
-{file_tree}
-</file_tree>
-
-2. The README file of the project:
-<readme>
-{readme[:3000]}
-</readme>
-
-I want to create a wiki for this repository. Determine the most logical structure for a wiki based on the repository's content.
-
-IMPORTANT: The wiki content will be generated in {lang_name} language.
-
-When designing the wiki structure, include pages that would benefit from visual diagrams, such as:
-- Architecture overviews
-- Data flow descriptions
-- Component relationships
-- Process workflows
-- State machines
-- Class hierarchies
-
-"""
-
-    if is_comprehensive:
-        base += """Create a structured wiki with the following main sections:
-- Overview (general information about the project)
-- System Architecture (how the system is designed)
-- Core Features (key functionality)
-- Data Management/Flow
-- Frontend Components (UI elements, if applicable)
-- Backend Systems (server-side components)
-- Deployment/Infrastructure
-
-Return your analysis in the following XML format:
-
-<wiki_structure>
-  <title>[Overall title for the wiki]</title>
-  <description>[Brief description of the repository]</description>
-  <sections>
-    <section id="section-1">
-      <title>[Section title]</title>
-      <pages>
-        <page_ref>page-1</page_ref>
-      </pages>
-      <subsections>
-        <section_ref>section-2</section_ref>
-      </subsections>
-    </section>
-  </sections>
-  <pages>
-    <page id="page-1">
-      <title>[Page title]</title>
-      <description>[Brief description of what this page will cover]</description>
-      <importance>high|medium|low</importance>
-      <relevant_files>
-        <file_path>[Path to a relevant file]</file_path>
-      </relevant_files>
-      <related_pages>
-        <related>page-2</related>
-      </related_pages>
-      <parent_section>section-1</parent_section>
-    </page>
-  </pages>
-</wiki_structure>
-
-Create 8-12 pages that would make a comprehensive wiki for this repository.
-"""
-    else:
-        base += """Return your analysis in the following XML format:
-
-<wiki_structure>
-  <title>[Overall title for the wiki]</title>
-  <description>[Brief description of the repository]</description>
-  <pages>
-    <page id="page-1">
-      <title>[Page title]</title>
-      <description>[Brief description of what this page will cover]</description>
-      <importance>high|medium|low</importance>
-      <relevant_files>
-        <file_path>[Path to a relevant file]</file_path>
-      </relevant_files>
-      <related_pages>
-        <related>page-2</related>
-      </related_pages>
-    </page>
-  </pages>
-</wiki_structure>
-
-Create 4-6 pages that would make a concise wiki for this repository.
-"""
-
-    base += """
-IMPORTANT FORMATTING INSTRUCTIONS:
-- Return ONLY the valid XML structure specified above
-- DO NOT wrap the XML in markdown code blocks (no ``` or ```xml)
-- DO NOT include any explanation text before or after the XML
-- Ensure the XML is properly formatted and valid
-- Start directly with <wiki_structure> and end with </wiki_structure>
-
-IMPORTANT:
-1. Each page should focus on a specific aspect of the codebase
-2. The relevant_files should be actual files from the repository
-3. Return ONLY valid XML with the structure specified above
-"""
-    return base
 
 # ── Worker 主循环 ─────────────────────────────────────────────────────────────
 
