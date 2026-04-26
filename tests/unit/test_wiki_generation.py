@@ -75,31 +75,48 @@ def test_build_shared_structure_prompt_includes_files_beyond_200_entries():
     assert 'src/module_204.py' in prompt
 
 
+def test_build_repo_file_url_uses_explicit_default_branch():
+    result = build_repo_file_url('https://github.com/livekit/agents', 'README.md', branch='master')
+
+    assert result == 'https://github.com/livekit/agents/blob/master/README.md'
+
+
 def test_build_repo_file_url_ignores_unknown_host():
     result = build_repo_file_url('http://example/safishamsi/graphify', 'README.md')
 
     assert result == ''
 
 
-def test_normalize_source_citation_links_rewrites_placeholder_link():
-    markdown = 'Sources: [README.md:1-10](#source:README.md:1-10)'
+def test_normalize_source_citation_links_normalizes_windows_separators():
+    markdown = 'Sources: [livekit-plugins\\livekit-plugins-openai\\livekit\\plugins\\openai\\__init__.py:40-55](#source:livekit-plugins\\livekit-plugins-openai\\livekit\\plugins\\openai\\__init__.py:40-55)'
 
-    normalized = normalize_source_citation_links(markdown, 'https://github.com/safishamsi/graphify')
+    normalized = normalize_source_citation_links(markdown, 'https://github.com/livekit/agents')
 
-    assert 'https://github.com/safishamsi/graphify/blob/main/README.md#L1-L10' in normalized
+    assert 'livekit-plugins/livekit-plugins-openai/livekit/plugins/openai/__init__.py#L40-L55' in normalized
+    assert '\\' not in normalized
 
-
-def test_validate_generated_wiki_page_rejects_missing_sources():
     valid, reason = validate_generated_wiki_page('# Title\n\nNo citations here', ['graphify/api.py'])
 
     assert valid is False
     assert 'details' in reason.lower()
 
 
-def test_validate_generated_wiki_page_requires_relevant_sources_details_block():
-    markdown = '# Title\n\nSources: [graphify/api.py:1](https://github.com/safishamsi/graphify/blob/main/graphify/api.py#L1)'
+def test_validate_generated_wiki_page_rejects_single_surface_level_source_block():
+    markdown = '''<details>
+<summary>Relevant source files</summary>
 
-    valid, reason = validate_generated_wiki_page(markdown, ['graphify/api.py'])
+- [README.md](https://github.com/livekit/agents/blob/main/README.md)
+</details>
+
+# 项目概览
+
+这是一个概览段落。
+
+Sources: [README.md:1-10](https://github.com/livekit/agents/blob/main/README.md#L1-L10)
+'''
+
+    valid, reason = validate_generated_wiki_page(markdown, ['README.md', 'livekit-agents/livekit/agents/worker.py'])
 
     assert valid is False
-    assert 'details' in reason.lower()
+    assert 'multiple' in reason.lower() or 'at least' in reason.lower()
+

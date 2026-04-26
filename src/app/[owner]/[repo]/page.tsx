@@ -11,6 +11,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { useTaskQueue } from '@/contexts/TaskQueueContext';
 import { RepoInfo } from '@/types/repoinfo';
 import getRepoUrl from '@/utils/getRepoUrl';
+import { chooseDefaultModelConfig } from '@/utils/modelDefaults';
 import { sendChatCompletionRequest } from '@/utils/websocketClient';
 import { extractUrlDomain, extractUrlPath } from '@/utils/urlDecoder';
 import Link from 'next/link';
@@ -123,9 +124,9 @@ const addTokensToRequestBody = (
     requestBody.token = token;
   }
 
-  // Add provider-based model selection parameters
-  requestBody.provider = provider;
-  requestBody.model = model;
+  const defaults = chooseDefaultModelConfig(process.env);
+  requestBody.provider = provider || defaults.provider;
+  requestBody.model = model || defaults.model;
   if (isCustomModel && customModel) {
     requestBody.custom_model = customModel;
   }
@@ -147,6 +148,27 @@ const addTokensToRequestBody = (
   }
 
 };
+
+const buildStructureRequestBody = (
+  repoUrl: string,
+  repoType: string,
+  owner: string,
+  repo: string,
+  fileTree: string,
+  readme: string,
+  isComprehensiveView: boolean,
+) => ({
+  repo_url: repoUrl,
+  type: repoType,
+  wiki_task: 'structure',
+  wiki_file_tree: fileTree,
+  wiki_readme: readme,
+  wiki_is_comprehensive: isComprehensiveView,
+  messages: [{
+    role: 'user',
+    content: `Generate wiki structure for ${owner}/${repo}`,
+  }],
+});
 
 const createGithubHeaders = (githubToken: string): HeadersInit => {
   const headers: HeadersInit = {

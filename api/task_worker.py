@@ -22,6 +22,8 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 from api.chat_runtime import run_chat_once
+from api.repo_branch import detect_default_branch
+from api.page_source_merge import merge_page_source_files
 from api.task_queue import (
     cancel_task as db_cancel_task,
     get_next_queued_task,
@@ -358,6 +360,7 @@ async def run_task(task: dict) -> None:
     repo_url = task.get("repo_url") or ""
 
     repo_name = f"{owner}/{repo}"
+    default_branch = detect_default_branch(repo_url, repo_type, task.get('token')) if repo_url and repo_type != 'local' else 'main'
 
     # ── 阶段 1: fetching ──────────────────────────────────────────────────
     update_task_status(task_id, "running", current_step="fetching",
@@ -549,7 +552,11 @@ async def run_task(task: dict) -> None:
                 ]
                 retrieved_file_paths = [doc["file_path"] for doc in page_context_docs if doc.get("file_path")]
                 if retrieved_file_paths:
-                    relevant_page_files = list(dict.fromkeys(retrieved_file_paths))
+                    relevant_page_files = merge_page_source_files(
+                        relevant_page_files,
+                        retrieved_file_paths,
+                        max_extra=5,
+                    )
         except Exception as retrieval_error:
             logger.warning(f"[{task_id}] Per-page retrieval failed for {page.get('title')}: {retrieval_error}")
             page_context_docs = [doc for doc in context_documents if doc["file_path"] in relevant_page_files]
@@ -561,7 +568,7 @@ async def run_task(task: dict) -> None:
             file_paths=relevant_page_files,
             language=language,
             repo_url=repo_url,
-            default_branch="main",
+            default_branch=default_branch,
             file_contents=file_contents_for_page,
         )
         if page_context_text:
@@ -587,7 +594,7 @@ async def run_task(task: dict) -> None:
             request=page_request,
             step_name=f"page:{page.get('title', page_id)}",
         )
-        page_content = normalize_source_citation_links(page_content, repo_url, "main")
+        page_content = normalize_source_citation_links(page_content, repo_url, default_branch)
         is_valid, validation_reason = validate_generated_wiki_page(page_content, relevant_page_files)
         if not is_valid:
             page_content = (

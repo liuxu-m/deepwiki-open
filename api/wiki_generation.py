@@ -7,14 +7,15 @@ def build_repo_file_url(repo_url: str, file_path: str, branch: str = "main") -> 
         return ""
 
     normalized_repo_url = repo_url.rstrip("/")
+    normalized_file_path = file_path.replace("\\", "/")
     hostname = normalized_repo_url.split("//", 1)[-1].split("/", 1)[0].lower()
 
     if hostname == "github.com" or "github" in hostname:
-        return f"{normalized_repo_url}/blob/{branch}/{file_path}"
+        return f"{normalized_repo_url}/blob/{branch}/{normalized_file_path}"
     if hostname == "gitlab.com" or "gitlab" in hostname:
-        return f"{normalized_repo_url}/-/blob/{branch}/{file_path}"
+        return f"{normalized_repo_url}/-/blob/{branch}/{normalized_file_path}"
     if hostname == "bitbucket.org" or "bitbucket" in hostname:
-        return f"{normalized_repo_url}/src/{branch}/{file_path}"
+        return f"{normalized_repo_url}/src/{branch}/{normalized_file_path}"
     return ""
 
 
@@ -39,7 +40,8 @@ def normalize_source_citation_links(markdown: str, repo_url: str, branch: str = 
 
 def _rewrite_citation_match(match: re.Match[str], repo_url: str, branch: str = "main") -> str:
     file_path, start_line, end_line, href = match.groups()
-    normalized_url = build_repo_citation_url(repo_url, file_path, start_line, end_line, branch)
+    normalized_file_path = file_path.replace("\\", "/")
+    normalized_url = build_repo_citation_url(repo_url, normalized_file_path, start_line, end_line, branch)
     if not normalized_url:
         return match.group(0)
 
@@ -48,23 +50,27 @@ def _rewrite_citation_match(match: re.Match[str], repo_url: str, branch: str = "
         not trimmed_href
         or trimmed_href == "#"
         or trimmed_href.startswith("#source:")
-        or file_path not in trimmed_href
+        or normalized_file_path not in trimmed_href.replace("\\", "/")
         or ("#L" not in trimmed_href and "#lines-" not in trimmed_href)
     )
     if not should_rewrite:
-        return match.group(0)
+        return match.group(0).replace(file_path, normalized_file_path)
 
     line_suffix = f"-{end_line}" if end_line else ""
-    return f"[{file_path}:{start_line}{line_suffix}]({normalized_url})"
+    return f"[{normalized_file_path}:{start_line}{line_suffix}]({normalized_url})"
 
 
 def validate_generated_wiki_page(markdown: str, file_paths: list[str]) -> tuple[bool, str]:
     if '<details>' not in markdown or 'Relevant source files' not in markdown:
         return False, 'Missing Relevant source files details block'
-    if 'Sources:' not in markdown:
+    source_lines = [line for line in markdown.splitlines() if line.strip().startswith('Sources:')]
+    if not source_lines:
         return False, 'Missing Sources citations'
-    if file_paths and not any(file_path in markdown for file_path in file_paths):
-        return False, 'Generated page does not reference selected source files'
+    if len(source_lines) < 2:
+        return False, 'At least two Sources citations are required in the body'
+    matched_files = [file_path for file_path in file_paths if file_path in markdown]
+    if file_paths and len(matched_files) < min(2, len(file_paths)):
+        return False, 'Generated page must reference multiple selected source files'
     return True, ''
 
 
