@@ -1,4 +1,5 @@
 import logging
+import time
 import weakref
 import re
 from dataclasses import dataclass
@@ -7,7 +8,12 @@ from uuid import uuid4
 
 import adalflow as adal
 
-from api.tools.embedder import get_embedder
+from api.tools.embedder import (
+    get_embedder,
+    embed_with_retry_sync,
+    EMBED_MAX_RETRIES,
+    EMBED_RETRY_BASE_DELAY,
+)
 from api.prompts import RAG_SYSTEM_PROMPT as system_prompt, RAG_TEMPLATE
 
 # Create our own implementation of the conversation classes
@@ -200,7 +206,7 @@ class RAG(adal.Component):
                 query = query[0]
             instance = self_weakref()
             assert instance is not None, "RAG instance is no longer available, but the query embedder was called."
-            return instance.embedder(input=query)
+            return embed_with_retry_sync(instance.embedder, query)
 
         # Use single string embedder for Ollama, regular embedder for others
         self.query_embedder = single_string_embedder if self.is_ollama_embedder else self.embedder
@@ -413,6 +419,32 @@ IMPORTANT FORMATTING RULES:
                 logger.error(f"Sample embedding sizes: {', '.join(sizes)}")
             raise
 
+    def _retrieve_with_retry(self, query: str):
+        """Retrieve documents with retry on embedding failures.
+
+        The most common failure inside retriever(query) is the embedding call
+        timing out or returning empty vectors.  FAISS search itself is
+        essentially instantaneous, so retrying the whole retriever invocation
+        is safe and simple.
+        """
+        last_error = None
+        for attempt in range(EMBED_MAX_RETRIES + 1):
+            try:
+                return self.retriever(query)
+            except Exception as e:
+                last_error = str(e)
+                if attempt < EMBED_MAX_RETRIES:
+                    delay = EMBED_RETRY_BASE_DELAY * (2 ** attempt)
+                    logger.warning(
+                        f"Retrieval retry {attempt + 1}/{EMBED_MAX_RETRIES} "
+                        f"after {delay}s: {last_error}"
+                    )
+                    time.sleep(delay)
+
+        raise RuntimeError(
+            f"Retrieval failed after {EMBED_MAX_RETRIES} retries: {last_error}"
+        )
+
     def call(self, query: str, language: str = "en") -> Tuple[List]:
         """
         Process a query using RAG.
@@ -424,7 +456,7 @@ IMPORTANT FORMATTING RULES:
             Tuple of (RAGAnswer, retrieved_documents)
         """
         try:
-            retrieved_documents = self.retriever(query)
+            retrieved_documents = self._retrieve_with_retry(query)
 
             # Fill in the documents
             retrieved_documents[0].documents = [
