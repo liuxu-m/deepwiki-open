@@ -427,11 +427,13 @@ IMPORTANT FORMATTING RULES:
         essentially instantaneous, so retrying the whole retriever invocation
         is safe and simple.
         """
+        from api.tools.embedder import _RETRYABLE_ERRORS
+
         last_error = None
         for attempt in range(EMBED_MAX_RETRIES + 1):
             try:
                 return self.retriever(query)
-            except Exception as e:
+            except _RETRYABLE_ERRORS as e:
                 last_error = str(e)
                 if attempt < EMBED_MAX_RETRIES:
                     delay = EMBED_RETRY_BASE_DELAY * (2 ** attempt)
