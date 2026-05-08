@@ -61,16 +61,50 @@ def _rewrite_citation_match(match: re.Match[str], repo_url: str, branch: str = "
 
 
 def validate_generated_wiki_page(markdown: str, file_paths: list[str]) -> tuple[bool, str]:
+    # 1. 必须包含 details block
     if '<details>' not in markdown or 'Relevant source files' not in markdown:
         return False, 'Missing Relevant source files details block'
-    source_lines = [line for line in markdown.splitlines() if line.strip().startswith('Sources:')]
-    if not source_lines:
-        return False, 'Missing Sources citations'
-    if len(source_lines) < 2:
-        return False, 'At least two Sources citations are required in the body'
-    matched_files = [file_path for file_path in file_paths if file_path in markdown]
-    if file_paths and len(matched_files) < min(2, len(file_paths)):
-        return False, 'Generated page must reference multiple selected source files'
+
+    # 2. 按 H2 拆分 section
+    sections = re.split(r'\n(?=## )', markdown)
+    body_sections = [s for s in sections if s.strip().startswith('## ')]
+
+    if len(body_sections) < 2:
+        return False, 'At least two H2 sections are required'
+
+    # 3. 每个 H2 section 至少 1 个 Sources:
+    sections_without_sources = []
+    for sec in body_sections:
+        if 'Sources:' not in sec:
+            heading = sec.split('\n')[0].strip()
+            sections_without_sources.append(heading)
+
+    if sections_without_sources:
+        return False, (
+            f'Every H2 section must include at least one Sources citation. '
+            f'Missing in: {", ".join(sections_without_sources[:3])}'
+        )
+
+    # 4. 至少引用 3 个不同文件（不只是 README）
+    cited_files = set()
+    for match in re.finditer(r'Sources:\s*\[([^:\]]+)', markdown):
+        cited_files.add(match.group(1))
+
+    non_readme_files = {f for f in cited_files if 'readme' not in f.lower()}
+    if len(non_readme_files) < 2:
+        return False, (
+            f'Must cite at least 2 non-README source files. '
+            f'Found: {", ".join(sorted(non_readme_files)) if non_readme_files else "none"}'
+        )
+
+    # 5. 引用的文件必须在 file_paths 中存在
+    matched_files = [fp for fp in file_paths if fp in markdown]
+    if file_paths and len(matched_files) < min(3, len(file_paths)):
+        return False, (
+            f'Generated page must reference at least 3 selected source files. '
+            f'Matched: {len(matched_files)}/{len(file_paths)}'
+        )
+
     return True, ''
 
 

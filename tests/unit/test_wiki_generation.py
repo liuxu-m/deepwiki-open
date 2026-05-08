@@ -118,5 +118,96 @@ Sources: [README.md:1-10](https://github.com/livekit/agents/blob/main/README.md#
     valid, reason = validate_generated_wiki_page(markdown, ['README.md', 'livekit-agents/livekit/agents/worker.py'])
 
     assert valid is False
-    assert 'multiple' in reason.lower() or 'at least' in reason.lower()
+    # Fails because: only 1 H2 section (needs 2+) or only README citations
+    assert 'H2' in reason or 'non-README' in reason.lower()
+
+
+def test_validate_generated_wiki_page_requires_sources_in_each_h2_section():
+    markdown = '''<details>
+<summary>Relevant source files</summary>
+
+- [README.md](https://github.com/example/repo/blob/main/README.md)
+- [src/main.py](https://github.com/example/repo/blob/main/src/main.py)
+- [src/utils.py](https://github.com/example/repo/blob/main/src/utils.py)
+</details>
+
+# 项目概览
+
+这是介绍段落。
+
+Sources: [src/main.py:1-10](https://github.com/example/repo/blob/main/src/main.py#L1-L10)
+
+## 架构设计
+
+架构说明段落。
+
+Sources: [src/main.py:20-30](https://github.com/example/repo/blob/main/src/main.py#L20-L30)
+
+## 核心功能
+
+功能描述段落。
+Sources: [src/utils.py:5-15](https://github.com/example/repo/blob/main/src/utils.py#L5-L15)
+'''
+
+    valid, reason = validate_generated_wiki_page(
+        markdown,
+        ['README.md', 'src/main.py', 'src/utils.py']
+    )
+
+    assert valid, f'Expected valid but got: {reason}'
+
+
+def test_validate_generated_wiki_page_rejects_missing_section_sources():
+    markdown = '''<details>
+<summary>Relevant source files</summary>
+
+- [README.md](https://github.com/example/repo/blob/main/README.md)
+- [src/main.py](https://github.com/example/repo/blob/main/src/main.py)
+</details>
+
+# 项目概览
+
+Sources: [src/main.py:1-10](https://github.com/example/repo/blob/main/src/main.py#L1-L10)
+
+## 架构设计
+
+架构说明段落，但没有 Sources 引用。
+'''
+
+    valid, reason = validate_generated_wiki_page(
+        markdown,
+        ['README.md', 'src/main.py']
+    )
+
+    assert valid is False
+    assert 'H2 section' in reason
+
+
+def test_validate_generated_wiki_page_rejects_readme_only_citations():
+    markdown = '''<details>
+<summary>Relevant source files</summary>
+
+- [README.md](https://github.com/example/repo/blob/main/README.md)
+</details>
+
+# 项目概览
+
+Sources: [README.md:1-10](https://github.com/example/repo/blob/main/README.md#L1-L10)
+
+## 安装说明
+
+Sources: [README.md:20-30](https://github.com/example/repo/blob/main/README.md#L20-L30)
+
+## 使用指南
+
+Sources: [README.md:40-50](https://github.com/example/repo/blob/main/README.md#L40-L50)
+'''
+
+    valid, reason = validate_generated_wiki_page(
+        markdown,
+        ['README.md']
+    )
+
+    assert valid is False
+    assert 'non-readme' in reason.lower()
 
