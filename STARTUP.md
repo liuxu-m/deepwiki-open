@@ -36,7 +36,6 @@ npm run dev
 ```bash
 npm run build && npm start
 npm start
-set PORT=3005&& npm start
 ```
 
 > 注意：每次修改代码后需要重新 `npm run build`
