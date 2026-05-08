@@ -14,6 +14,7 @@ import getRepoUrl from '@/utils/getRepoUrl';
 import { chooseDefaultModelConfig } from '@/utils/modelDefaults';
 import { sendChatCompletionRequest } from '@/utils/websocketClient';
 import { extractUrlDomain, extractUrlPath } from '@/utils/urlDecoder';
+import { buildStructureRequestBody } from '@/utils/wikiRequestBodies';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -148,27 +149,6 @@ const addTokensToRequestBody = (
   }
 
 };
-
-const buildStructureRequestBody = (
-  repoUrl: string,
-  repoType: string,
-  owner: string,
-  repo: string,
-  fileTree: string,
-  readme: string,
-  isComprehensiveView: boolean,
-) => ({
-  repo_url: repoUrl,
-  type: repoType,
-  wiki_task: 'structure',
-  wiki_file_tree: fileTree,
-  wiki_readme: readme,
-  wiki_is_comprehensive: isComprehensiveView,
-  messages: [{
-    role: 'user',
-    content: `Generate wiki structure for ${owner}/${repo}`,
-  }],
-});
 
 const createGithubHeaders = (githubToken: string): HeadersInit => {
   const headers: HeadersInit = {
