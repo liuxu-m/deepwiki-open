@@ -596,13 +596,39 @@ async def run_task(task: dict) -> None:
         )
         page_content = normalize_source_citation_links(page_content, repo_url, default_branch)
         is_valid, validation_reason = validate_generated_wiki_page(page_content, relevant_page_files)
+
+        # Audit log for grounding quality
+        logger.info(
+            f"[{task_id}] Page '{page.get('title', page_id)}' validation: "
+            f"valid={is_valid}, reason={validation_reason or 'OK'}, "
+            f"structure_files={len(page.get('relevant_files', []))}, "
+            f"merged_files={len(relevant_page_files)}, "
+            f"content_sources={page_content.count('Sources:')}, "
+            f"content_h2={page_content.count(chr(10) + '## ')}"
+        )
+
         if not is_valid:
-            page_content = (
-                f"# {page.get('title', '')}\n\n"
-                f"Unable to generate a grounded wiki page for this section.\n\n"
-                f"Reason: {validation_reason}\n\n"
-                f"Relevant source files: {', '.join(relevant_page_files)}"
+            logger.warning(
+                f"[{task_id}] Page '{page.get('title', page_id)}' FAILED grounding validation: "
+                f"{validation_reason}"
             )
+            # Store as failed page with empty content — do NOT write fake success content
+            generated_pages[page_id] = {
+                **page,
+                "content": "",
+                "generated_at": int(time.time() * 1000),
+                "validation_failed": True,
+                "validation_reason": validation_reason,
+            }
+            completed_ids.add(page_id)
+            # Save checkpoint so we don't lose progress
+            save_checkpoint(task_id, {
+                "completed_page_ids": list(completed_ids),
+                "generated_pages": generated_pages,
+                "wiki_struct": wiki_struct,
+                "structure_text": structure_text,
+            })
+            continue  # skip to next page
 
         generated_pages[page_id] = {
             **page,

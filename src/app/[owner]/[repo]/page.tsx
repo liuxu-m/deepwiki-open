@@ -38,6 +38,8 @@ interface WikiPage {
   parentId?: string;
   isSection?: boolean;
   children?: string[];
+  validation_failed?: boolean;
+  validation_reason?: string;
 }
 
 interface WikiStructure {
@@ -1949,10 +1951,25 @@ Remember:
                     </h3>
 
                     <div className="prose prose-base max-w-none">
-                      <Markdown
-                        content={generatedPages[currentPageId].content}
-                        key={currentPageId}
-                      />
+                      {generatedPages[currentPageId].content ? (
+                        <Markdown
+                          content={generatedPages[currentPageId].content}
+                          key={currentPageId}
+                        />
+                      ) : generatedPages[currentPageId].validation_failed ? (
+                        <div className="p-4 border border-amber-200 dark:border-amber-800 rounded-lg bg-amber-50 dark:bg-amber-950/30">
+                          <p className="text-amber-700 dark:text-amber-400">
+                            This page could not be generated with sufficient grounding quality.
+                            {generatedPages[currentPageId].validation_reason && (
+                              <span className="block text-sm mt-1 opacity-75">Reason: {generatedPages[currentPageId].validation_reason}</span>
+                            )}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center py-8">
+                          <div className="w-6 h-6 border-2 border-blue-100 rounded-full animate-spin border-t-blue-500" />
+                        </div>
+                      )}
                     </div>
 
                     {generatedPages[currentPageId].relatedPages.length > 0 && (
