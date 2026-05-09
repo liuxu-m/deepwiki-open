@@ -72,20 +72,28 @@ def validate_generated_wiki_page(markdown: str, file_paths: list[str]) -> tuple[
     if len(body_sections) < 2:
         return False, 'At least two H2 sections are required'
 
-    # 3. 每个 H2 section 至少 1 个 Sources:
+    # 3. 只对正文类 H2 section 强制要求 Sources
+    summary_section_keywords = (
+        '总结', '小结', '结论', 'summary', 'conclusion',
+        '架构图', '流程图', 'diagram', 'workflow diagram',
+    )
+
     sections_without_sources = []
     for sec in body_sections:
+        heading = sec.split('\n')[0].strip()
+        normalized_heading = heading.lower()
+        if any(keyword in normalized_heading for keyword in summary_section_keywords):
+            continue
         if 'Sources:' not in sec:
-            heading = sec.split('\n')[0].strip()
             sections_without_sources.append(heading)
 
     if sections_without_sources:
         return False, (
-            f'Every H2 section must include at least one Sources citation. '
+            f'Every non-summary H2 section must include at least one Sources citation. '
             f'Missing in: {", ".join(sections_without_sources[:3])}'
         )
 
-    # 4. 至少引用 3 个不同文件（不只是 README）
+    # 4. 至少引用 2 个非 README 文件
     cited_files = set()
     for match in re.finditer(r'Sources:\s*\[([^:\]]+)', markdown):
         cited_files.add(match.group(1))

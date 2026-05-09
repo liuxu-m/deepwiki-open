@@ -15,6 +15,7 @@ import { chooseDefaultModelConfig } from '@/utils/modelDefaults';
 import { sendChatCompletionRequest } from '@/utils/websocketClient';
 import { extractUrlDomain, extractUrlPath } from '@/utils/urlDecoder';
 import { buildStructureRequestBody } from '@/utils/wikiRequestBodies';
+import { shouldWaitForBackgroundTask } from '@/utils/backgroundTaskGate';
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -38,6 +39,7 @@ interface WikiPage {
   parentId?: string;
   isSection?: boolean;
   children?: string[];
+  raw_content?: string;
   validation_failed?: boolean;
   validation_reason?: string;
 }
@@ -1632,7 +1634,30 @@ Remember:
           // Proceed to fetch structure if cache loading fails
         }
 
+        // If a matching background task is already running or queued, wait for it instead of
+        // triggering the old foreground structure-generation path.
+        const matchingBackgroundTask = tasks.find(task =>
+          task.owner === effectiveRepoInfo.owner &&
+          task.repo === effectiveRepoInfo.repo &&
+          task.repo_type === effectiveRepoInfo.type &&
+          ['queued', 'running', 'pause_requested', 'paused'].includes(task.status)
+        );
+
+        if (shouldWaitForBackgroundTask(tasks, effectiveRepoInfo)) {
+          console.log('Background wiki task already exists, waiting for task progress instead of starting foreground generation.');
+          setIsLoading(true);
+          setError(null);
+          setLoadingMessage('Wiki 正在后台生成中...');
+          if (matchingBackgroundTask && !bgTaskId) {
+            const currentUrl = new URL(window.location.href);
+            currentUrl.searchParams.set('bg_task_id', matchingBackgroundTask.id);
+            window.history.replaceState({}, '', currentUrl.toString());
+          }
+          return;
+        }
+
         // If we reached here, either there was no cache, it was invalid, or an error occurred
+        // and there is no existing background task for this repo.
         // Proceed to fetch repository structure
         fetchRepositoryStructure();
       };
@@ -1950,27 +1975,38 @@ Remember:
                       {generatedPages[currentPageId].title}
                     </h3>
 
-                    <div className="prose prose-base max-w-none">
-                      {generatedPages[currentPageId].content ? (
-                        <Markdown
-                          content={generatedPages[currentPageId].content}
-                          key={currentPageId}
-                        />
-                      ) : generatedPages[currentPageId].validation_failed ? (
-                        <div className="p-4 border border-amber-200 dark:border-amber-800 rounded-lg bg-amber-50 dark:bg-amber-950/30">
-                          <p className="text-amber-700 dark:text-amber-400">
-                            This page could not be generated with sufficient grounding quality.
-                            {generatedPages[currentPageId].validation_reason && (
-                              <span className="block text-sm mt-1 opacity-75">Reason: {generatedPages[currentPageId].validation_reason}</span>
-                            )}
-                          </p>
+                    {(() => {
+                      const currentPage = generatedPages[currentPageId];
+                      const displayContent = (currentPage.content || currentPage.raw_content || '').trim();
+
+                      return (
+                        <div className="prose prose-base max-w-none">
+                          {currentPage.validation_failed && (
+                            <div className="mb-4 p-4 border border-amber-200 dark:border-amber-800 rounded-lg bg-amber-50 dark:bg-amber-950/30 not-prose">
+                              <p className="text-amber-700 dark:text-amber-400 font-medium">
+                                This page did not pass strict grounding validation. Displaying the raw generated content.
+                              </p>
+                              {currentPage.validation_reason && (
+                                <p className="text-sm mt-1 text-amber-600 dark:text-amber-500">
+                                  Reason: {currentPage.validation_reason}
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {displayContent ? (
+                            <Markdown
+                              content={displayContent}
+                              key={currentPageId}
+                            />
+                          ) : (
+                            <div className="flex items-center justify-center py-8">
+                              <div className="w-6 h-6 border-2 border-blue-100 rounded-full animate-spin border-t-blue-500" />
+                            </div>
+                          )}
                         </div>
-                      ) : (
-                        <div className="flex items-center justify-center py-8">
-                          <div className="w-6 h-6 border-2 border-blue-100 rounded-full animate-spin border-t-blue-500" />
-                        </div>
-                      )}
-                    </div>
+                      );
+                    })()}
 
                     {generatedPages[currentPageId].relatedPages.length > 0 && (
                       <div className="mt-10 pt-6 border-t border-[var(--border-color)]">
@@ -2009,9 +2045,11 @@ Remember:
 
             {/* Table of Contents - Right column */}
             <div className="h-full overflow-y-auto border-l border-[var(--border-color)] p-4">
-              {currentPageId && generatedPages[currentPageId] && (
-                <TableOfContents content={generatedPages[currentPageId].content} key={currentPageId} />
-              )}
+              {currentPageId && generatedPages[currentPageId] && (() => {
+                const currentPage = generatedPages[currentPageId];
+                const displayContent = (currentPage.content || currentPage.raw_content || '').trim();
+                return <TableOfContents content={displayContent} key={currentPageId} />;
+              })()}
             </div>
           </div>
         </>

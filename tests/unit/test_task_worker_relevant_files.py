@@ -46,7 +46,7 @@ def test_expand_relevant_files_keeps_explicit_files_and_caps_output():
     assert 'multica/models/' not in result
 
 
-def test_normalize_wiki_output_converts_section_refs_to_api_fields():
+def test_normalize_wiki_output_preserves_raw_content_and_validation_flags():
     wiki_struct = {
         'title': 'Demo Wiki',
         'description': 'demo',
@@ -60,14 +60,7 @@ def test_normalize_wiki_output_converts_section_refs_to_api_fields():
                 'parent_section': '',
             }
         ],
-        'sections': [
-            {
-                'id': 's-overview',
-                'title': 'Overview',
-                'page_refs': ['page-1'],
-                'subsection_refs': [],
-            }
-        ],
+        'sections': [],
     }
     generated_pages = {
         'page-1': {
@@ -76,14 +69,19 @@ def test_normalize_wiki_output_converts_section_refs_to_api_fields():
             'importance': 'high',
             'relevant_files': ['README.md'],
             'related_pages': [],
-            'content': 'hello',
+            'content': '# Overview\n\nBody',
+            'raw_content': '# Overview\n\nBody',
+            'validation_failed': True,
+            'validation_reason': 'Must cite at least 2 non-README source files',
         }
     }
 
     struct, pages = _normalize_wiki_output(wiki_struct, generated_pages, {})
 
-    assert struct['sections'][0]['pages'] == ['page-1']
-    assert struct['sections'][0]['subsections'] == []
-    assert 'page_refs' not in struct['sections'][0]
-    assert 'subsection_refs' not in struct['sections'][0]
-    assert pages['page-1']['filePaths'] == ['README.md']
+    assert struct['pages'][0]['content'] == '# Overview\n\nBody'
+    assert pages['page-1']['content'] == '# Overview\n\nBody'
+    assert pages['page-1']['raw_content'] == '# Overview\n\nBody'
+    assert pages['page-1']['validation_failed'] is True
+    assert pages['page-1']['validation_reason'] == 'Must cite at least 2 non-README source files'
+
+

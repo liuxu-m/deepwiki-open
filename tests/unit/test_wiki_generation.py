@@ -157,12 +157,13 @@ Sources: [src/utils.py:5-15](https://github.com/example/repo/blob/main/src/utils
     assert valid, f'Expected valid but got: {reason}'
 
 
-def test_validate_generated_wiki_page_rejects_missing_section_sources():
+def test_validate_generated_wiki_page_allows_summary_sections_without_sources():
     markdown = '''<details>
 <summary>Relevant source files</summary>
 
 - [README.md](https://github.com/example/repo/blob/main/README.md)
 - [src/main.py](https://github.com/example/repo/blob/main/src/main.py)
+- [src/utils.py](https://github.com/example/repo/blob/main/src/utils.py)
 </details>
 
 # 项目概览
@@ -171,19 +172,29 @@ Sources: [src/main.py:1-10](https://github.com/example/repo/blob/main/src/main.p
 
 ## 架构设计
 
-架构说明段落，但没有 Sources 引用。
+架构说明段落。
+
+Sources: [src/main.py:20-30](https://github.com/example/repo/blob/main/src/main.py#L20-L30)
+
+## 核心功能
+
+功能描述段落。
+
+Sources: [src/utils.py:5-15](https://github.com/example/repo/blob/main/src/utils.py#L5-L15)
+
+## 总结
+
+这是总结段落，没有额外 Sources。
 '''
 
     valid, reason = validate_generated_wiki_page(
         markdown,
-        ['README.md', 'src/main.py']
+        ['README.md', 'src/main.py', 'src/utils.py']
     )
 
-    assert valid is False
-    assert 'H2 section' in reason
+    assert valid, f'Expected valid but got: {reason}'
 
 
-def test_validate_generated_wiki_page_rejects_readme_only_citations():
     markdown = '''<details>
 <summary>Relevant source files</summary>
 

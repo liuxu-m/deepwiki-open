@@ -283,12 +283,12 @@ def request_pause(task_id: str) -> bool:
 
 
 def resume_task(task_id: str) -> bool:
-    """将 paused 任务恢复为 queued"""
+    """将 paused 或 pause_requested 任务恢复为 queued"""
     now = int(time.time() * 1000)
     with get_conn() as conn:
         result = conn.execute(
             """UPDATE tasks SET status = 'queued', updated_at = ?, error_message = NULL
-               WHERE id = ? AND status = 'paused'""",
+               WHERE id = ? AND status IN ('paused', 'pause_requested')""",
             (now, task_id),
         )
         return result.rowcount > 0

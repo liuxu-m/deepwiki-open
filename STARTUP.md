@@ -1,33 +1,45 @@
 # 启动步骤
 
-## 后端启动
+## 后端启动（uv）
 
-1. 激活 conda 环境
+项目当前推荐使用 `uv` 管理后端依赖并启动，不再使用旧的 conda/poetry 方式。
+
+1. 进入项目目录
    ```bash
-   conda activate D:\my_code\python_code\deepwiki-open\conda_envs\deepwiki-open
+   cd C:\code\agent_stu\deepwiki-open
    ```
 
-2. 进入项目目录
+2. 安装后端依赖
    ```bash
-   cd D:\my_code\python_code\deepwiki-open
+   uv sync --project api
    ```
 
 3. 启动后端
    ```bash
-   python -m api.main
+   uv run --project api python -m api.main
    ```
 
 后端地址：`http://localhost:8001`
+
+### 常见问题
+
+- 如果提示 `watchfiles` 缺失，通常是没有执行过 `uv sync --project api`
+- `uv` 会在 `api/.venv/` 下创建虚拟环境
+- 当前后端依赖声明位于 `api/pyproject.toml`
 
 ---
 
 ## 前端启动
 
-### 开发模式
+1. 进入项目目录
+   ```bash
+   cd C:\code\agent_stu\deepwiki-open
+   ```
 
-```bash
-npm run dev
-```
+2. 开发模式启动
+   ```bash
+   npm run dev
+   ```
 
 前端地址：`http://localhost:3000`
 
@@ -35,10 +47,9 @@ npm run dev
 
 ```bash
 npm run build && npm start
-npm start
 ```
 
-> 注意：每次修改代码后需要重新 `npm run build`
+> 注意：每次修改前端代码后，如果使用生产模式，需要重新 `npm run build`
 
 ---
 

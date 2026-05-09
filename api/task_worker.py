@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from api.chat_runtime import run_chat_once
 from api.repo_branch import detect_default_branch
-from api.page_source_merge import merge_page_source_files
+from api.page_source_merge import merge_page_source_files, prioritize_page_source_files
 from api.task_queue import (
     cancel_task as db_cancel_task,
     get_next_queued_task,
@@ -49,7 +49,8 @@ logger = logging.getLogger(__name__)
 # ── 常量 ─────────────────────────────────────────────────────────────────────
 
 POLL_INTERVAL = 5           # 秒：队列轮询间隔
-LLM_TIMEOUT = 120           # 秒：单次 LLM 调用超时
+STRUCTURE_LLM_TIMEOUT = 120 # 秒：结构生成超时
+PAGE_LLM_TIMEOUT = 300      # 秒：页面生成超时
 RETRY_DELAYS = [10, 30, 60] # 秒：各次重试等待时间
 LOCK_TIMEOUT = 60           # 秒：Worker 锁超时（防止死锁）
 
@@ -225,14 +226,15 @@ async def call_llm_with_retry(
     - 超过 max_retries → 抛出异常
     """
     last_error: Optional[str] = None
+    timeout = STRUCTURE_LLM_TIMEOUT if step_name == "wiki_structure" else PAGE_LLM_TIMEOUT
     for attempt in range(max_retries + 1):
         try:
-            result = await asyncio.wait_for(run_chat_once(request), timeout=LLM_TIMEOUT)
+            result = await asyncio.wait_for(run_chat_once(request), timeout=timeout)
             if not result or not result.strip():
                 raise ValueError(f"LLM returned empty response on step '{step_name}'")
             return result
         except asyncio.TimeoutError:
-            last_error = f"[{step_name}] LLM timeout after {LLM_TIMEOUT}s (attempt {attempt + 1}/{max_retries + 1})"
+            last_error = f"[{step_name}] LLM timeout after {timeout}s (attempt {attempt + 1}/{max_retries + 1})"
             logger.warning(last_error)
         except Exception as e:
             last_error = f"[{step_name}] LLM error: {type(e).__name__}: {e} (attempt {attempt + 1}/{max_retries + 1})"
@@ -477,6 +479,24 @@ async def run_task(task: dict) -> None:
         step_name="wiki_structure",
     )
 
+    if is_pause_requested(task_id):
+        logger.info(f"[{task_id}] Pause requested after structure generation, saving checkpoint before page generation")
+        wiki_struct = parse_wiki_structure_xml(structure_text)
+        pages = flatten_pages(wiki_struct)
+        save_checkpoint(task_id, {
+            "completed_page_ids": [],
+            "generated_pages": {},
+            "wiki_struct": wiki_struct,
+            "structure_text": structure_text,
+        })
+        update_task_status(
+            task_id, "paused",
+            current_step="structure",
+            total_pages=len(pages),
+            completed_pages=0,
+        )
+        return
+
     # 解析 Wiki 结构
     wiki_struct = parse_wiki_structure_xml(structure_text)
     pages = flatten_pages(wiki_struct)
@@ -562,6 +582,7 @@ async def run_task(task: dict) -> None:
             page_context_docs = [doc for doc in context_documents if doc["file_path"] in relevant_page_files]
 
         page_context_text = build_context_text(page_context_docs)
+        relevant_page_files = prioritize_page_source_files(relevant_page_files)
         file_contents_for_page = {path: file_contents[path] for path in relevant_page_files if path in file_contents}
         page_prompt = build_shared_page_prompt(
             page_title=page.get("title", ""),
@@ -612,10 +633,12 @@ async def run_task(task: dict) -> None:
                 f"[{task_id}] Page '{page.get('title', page_id)}' FAILED grounding validation: "
                 f"{validation_reason}"
             )
-            # Store as failed page with empty content — do NOT write fake success content
+            # Store failed page in dual-track mode: keep readable content for the UI,
+            # and preserve the same raw output for debugging / strict-quality review.
             generated_pages[page_id] = {
                 **page,
-                "content": "",
+                "content": page_content,
+                "raw_content": page_content,
                 "generated_at": int(time.time() * 1000),
                 "validation_failed": True,
                 "validation_reason": validation_reason,
