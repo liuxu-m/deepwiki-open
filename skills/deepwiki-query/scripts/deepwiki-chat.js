@@ -5,36 +5,38 @@ async function main() {
   const repoUrl = process.argv[2];
   const language = process.argv[3] || 'en';
   if (!repoUrl) {
-    console.error('Usage: deepwiki-chat <repo_url> [language]');
+    console.error('用法: node skills/deepwiki-query/scripts/deepwiki-chat.js <repo_url> [language]');
+    console.error('示例: node skills/deepwiki-query/scripts/deepwiki-chat.js https://github.com/owner/repo zh');
     process.exit(1);
   }
 
+  console.error(`正在查询 ${repoUrl} (语言: ${language}) ...`);
   const cache = await getWikiCache(repoUrl, language);
   const wiki = cache?.wiki_structure;
   if (!wiki) {
-    console.error('Wiki not generated yet. Generate it via DeepWiki Web UI first.');
+    console.error('该仓库的 Wiki 尚未生成，请先在 DeepWiki Web UI 中生成。');
     process.exit(2);
   }
 
-  const pageIds = (wiki.pages || []).slice(0, 10).map((page) => `- ${page.title} (${page.id})`).join('\n') || '- N/A';
-  const sectionTitles = (wiki.sections || []).map((section) => `- ${section.title}`).join('\n') || '- N/A';
+  const pageIds = (wiki.pages || []).slice(0, 10).map((p) => `- ${p.title} (\`${p.id}\`)`).join('\n') || '- 无';
+  const sectionTitles = (wiki.sections || []).map((s) => `- ${s.title}`).join('\n') || '- 无';
 
   process.stdout.write([
     `# ${wiki.title}`,
     '',
     wiki.description || '',
     '',
-    '## Sections',
+    '## 章节',
     sectionTitles,
     '',
-    '## Suggested Pages',
+    '## 推荐页面 (前10个)',
     pageIds,
     '',
-    'You can now continue by asking about a section, a page title, or a specific page_id.',
+    '你可以继续询问某个章节、页面标题或指定 page_id。',
   ].join('\n'));
 }
 
-main().catch((error) => {
-  console.error(`DeepWiki chat bootstrap failed: ${error.message}`);
+main().catch((err) => {
+  console.error(`查询失败: ${err.message}`);
   process.exit(1);
 });
