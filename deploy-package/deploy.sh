@@ -1,47 +1,52 @@
 #!/bin/bash
-# DeepWiki 部署脚本 - 本地执行
-# 使用方法: ./deploy.sh
-
+# DeepWiki 服务端部署脚本
+# 用法: cd app && bash deploy.sh
 set -e
 
-IMAGE_NAME="deepwiki"
-ARCHIVE_NAME="deepwiki-deploy.tar.gz"
+echo "========================================"
+echo "  DeepWiki 服务端部署"
+echo "========================================"
 
-echo "======================================"
-echo "  DeepWiki Docker 部署包生成"
-echo "======================================"
+# 检查 .env
+if [ ! -f .env ] || ! grep -q "MINIMAX_API_KEY=" .env; then
+  echo ""
+  echo "请先编辑 .env 文件，填写 API Key:"
+  echo "  vim .env"
+  echo ""
+  exit 1
+fi
 
-# 1. 构建镜像
-echo ""
-echo "[1/3] 构建 Docker 镜像..."
-docker build -t ${IMAGE_NAME}:latest .
+# 检查 Docker
+if ! command -v docker &> /dev/null; then
+  echo "Docker 未安装，请先安装 Docker"
+  exit 1
+fi
 
-# 2. 导出镜像
-echo ""
-echo "[2/3] 导出镜像到 ${ARCHIVE_NAME}..."
-docker save ${IMAGE_NAME}:latest -o ${ARCHIVE_NAME}
-
-# 3. 复制部署文件
-echo ""
-echo "[3/3] 复制部署配置文件..."
-mkdir -p deploy-package
-cp ${ARCHIVE_NAME} deploy-package/
-cp docker-compose.yml deploy-package/
-cp .env.example deploy-package/.env
-chmod +x deploy.sh
-cp deploy.sh deploy-package/
+# 检查端口
+BACKEND_PORT=$(grep -E "^BACKEND_PORT=" .env 2>/dev/null | cut -d= -f2 || echo "8001")
+if ss -tlnp 2>/dev/null | grep -q ":${BACKEND_PORT}"; then
+  echo "警告: 端口 ${BACKEND_PORT} 已被占用，请在 .env 中修改 BACKEND_PORT"
+fi
 
 echo ""
-echo "======================================"
-echo "  部署包已生成: deploy-package/"
-echo "======================================"
+echo "[1/2] 构建并启动容器..."
+docker-compose down --remove-orphans 2>/dev/null || true
+docker-compose up -d --build
+
 echo ""
-echo "上传到服务器:"
-echo "  scp -r deploy-package user@your-server:/opt/deepwiki/"
-echo ""
-echo "在服务器上运行:"
-echo "  cd /opt/deepwiki/deploy-package"
-echo "  cp .env .env.bak"
-echo "  vim .env  # 填写 API Key 和端口"
-echo "  docker-compose up -d"
-echo ""
+echo "[2/2] 等待服务就绪..."
+for i in $(seq 1 30); do
+  if curl -sf http://localhost:${BACKEND_PORT}/health > /dev/null 2>&1; then
+    echo "服务已启动!"
+    FRONTEND_PORT=$(grep -E "^FRONTEND_PORT=" .env 2>/dev/null | cut -d= -f2 || echo "3000")
+    echo ""
+    echo "前端: http://localhost:${FRONTEND_PORT}"
+    echo "后端: http://localhost:${BACKEND_PORT}"
+    echo "健康检查: http://localhost:${BACKEND_PORT}/health"
+    exit 0
+  fi
+  sleep 3
+done
+
+echo "启动超时，请检查 docker-compose logs"
+exit 1
