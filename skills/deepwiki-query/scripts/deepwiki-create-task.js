@@ -4,13 +4,13 @@ const { createTask } = require('./lib/http');
 async function main() {
   const repoUrl = process.argv[2];
   const language = process.argv[3] || 'en';
-  const provider = process.argv[4] || 'google';
+  const provider = process.argv[4] || 'minimax';
   const model = process.argv[5] || 'MiniMax-M2.7';
 
   if (!repoUrl) {
     console.error('用法: node skills/deepwiki-query/scripts/deepwiki-create-task.js <repo_url> [language] [provider] [model]');
     console.error('示例: node skills/deepwiki-query/scripts/deepwiki-create-task.js https://github.com/owner/repo zh');
-    console.error('示例: node skills/deepwiki-query/scripts/deepwiki-create-task.js owner/repo en google MiniMax-M2.7');
+    console.error('示例: node skills/deepwiki-query/scripts/deepwiki-create-task.js owner/repo en minimax MiniMax-M2.7');
     process.exit(1);
   }
 

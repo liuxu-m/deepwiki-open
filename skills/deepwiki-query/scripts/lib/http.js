@@ -76,7 +76,7 @@ async function createTask(repoUrl, options = {}) {
     repo_url: repoUrl.startsWith('http') ? repoUrl : `https://github.com/${owner}/${repo}`,
     language: options.language || 'en',
     is_comprehensive: options.is_comprehensive !== false,
-    provider: options.provider || 'google',
+    provider: options.provider || 'minimax',
     model: options.model || 'MiniMax-M2.7',
     token: options.token || null,
     local_path: options.localPath || null,

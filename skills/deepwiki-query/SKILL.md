@@ -5,7 +5,7 @@ description: Use when the user wants to check what projects DeepWiki has indexed
 
 # DeepWiki 查询
 
-通过 DeepWiki HTTP 后端查询 Wiki 文档和创建生成任务。默认连接 `http://dreamxu.xyz:8001`，可通过 `DEEPWIKI_BASE_URL` 覆盖。
+通过 DeepWiki HTTP 后端查询 Wiki 文档和创建生成任务。默认连接 `http://dreamxu.xyz:8001`，可通过 `DEEPWIKI_BASE_URL` 覆盖。创建任务脚本默认使用 `provider=minimax`、`model=MiniMax-M2.7`。
 
 ## 命令速查
 
@@ -25,7 +25,7 @@ description: Use when the user wants to check what projects DeepWiki has indexed
 2. 未知页面 → `deepwiki.js` 获取 page_id 列表
 3. 已知 page_id → `deepwiki-page.js` 读内容
 4. 对话准备 → `deepwiki-chat.js`
-5. 新仓库 → `deepwiki-create-task.js` 提交任务
+5. 新仓库 → `deepwiki-create-task.js` 提交任务（默认 `minimax` / `MiniMax-M2.7`）
 
 **读取页面前必须先查结构获取 page_id，禁止猜测。**
 
